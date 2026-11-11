@@ -54,7 +54,12 @@ PURE_MODULES = [
     "lib/calculator.js",
     "lib/format.js",
     "lib/gtype.js",
+    "lib/files-parse.js",
     "lib/providers/registry.js",
+    "searchd/registry.js",
+    "searchd/serialize.js",
+    "searchd/providers/commands.js",
+    "searchd/providers/calculator.js",
 ]
 
 REQUIRED_FILES = [
@@ -69,11 +74,24 @@ REQUIRED_FILES = [
     "lib/calculator.js",
     "lib/format.js",
     "lib/gtype.js",
+    "lib/files-parse.js",
     "lib/providers/files.js",
     "lib/providers/calculator.js",
     "lib/ui/modal.js",
     "lib/ui/resultRow.js",
+    "searchd/main.js",
+    "searchd/registry.js",
+    "searchd/searchProvider2.js",
+    "searchd/providers/apps.js",
+    "searchd/providers/settings.js",
+    "searchd/providers/files.js",
+    "searchd/providers/commands.js",
+    "searchd/providers/calculator.js",
+    "tools/install-daemon.sh",
+    "tools/bench-daemon.sh",
     "tests/js/harness.js",
+    "tests/js/daemon-registry.test.js",
+    "tests/js/files-parse.test.js",
     "tests/run_all.py",
 ]
 
@@ -222,6 +240,42 @@ def check_pure_modules() -> None:
         fail("no PURE modules found to check")
 
 
+def check_daemon_isolation() -> None:
+    """The daemon must be importable without a GNOME Shell session."""
+    daemon_dir = ROOT / "searchd"
+    if not daemon_dir.is_dir():
+        fail("searchd/ directory is missing")
+        return
+
+    forbidden_tokens = [
+        "gi://St",
+        "gi://Shell",
+        "gi://Clutter",
+        "resource:///org/gnome/shell",
+    ]
+    files = sorted(daemon_dir.rglob("*.js"))
+    if not files:
+        fail("searchd/ contains no JavaScript files")
+        return
+
+    problems_found = []
+    for path in files:
+        relative = path.relative_to(ROOT)
+        try:
+            source = read_text(path)
+        except OSError as exc:
+            problems_found.append(f"{relative}: cannot read: {exc}")
+            continue
+        found = [token for token in forbidden_tokens if token in source]
+        if found:
+            problems_found.append(f"{relative}: {', '.join(found)}")
+
+    if problems_found:
+        fail("daemon imports Shell-only modules: " + "; ".join(problems_found))
+    else:
+        ok(f"searchd/ has no St/Shell/Clutter imports ({len(files)} files)")
+
+
 def check_extension_esm() -> None:
     path = ROOT / "extension.js"
     if not path.is_file():
@@ -323,6 +377,7 @@ def main() -> int:
     check_metadata()
     check_schema()
     check_pure_modules()
+    check_daemon_isolation()
     check_extension_esm()
 
     passed_files, total_passed, total_failed = run_tests()
