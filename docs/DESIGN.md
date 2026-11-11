@@ -233,3 +233,64 @@ Karty 2–4 startują po scaleniu poprzedniej (wspólne pliki → konflikt workt
 - Zero `eval`/`Function` w kalkulatorze.
 - Nie zmieniaj `mockup/` (to referencja wizualna).
 - Nie dodawaj plików poza strukturą z §3 bez uzasadnienia w summary.
+## 13. Architektura docelowa: daemon wyszukiwania + rozszerzenie jako frontend
+
+Powód (pomiar 2026-11-11, żywa sesja): providery w wątku głównym Shella blokują kompozytor —
+`apps` 1115 ms, `settings` 1115 ms, `files` 514 ms przy pierwszym zapytaniu. Natywne wyszukiwanie
+GNOME jest płynne, bo providery są OSOBNYMI PROCESAMI po D-Busie (`org.gnome.Shell.SearchProvider2`),
+a Shell ma budżet 150 ms na rundę (`search.js:794`) i 5 wierszy na grupę (`search.js:23`).
+
+### Podział odpowiedzialności
+
+| Warstwa | Proces | Zawartość |
+|---|---|---|
+| UI | gnome-shell (rozszerzenie) | modal St, klawisze, podgląd, akcje, prefiksy, frecency (historia użyć), provider `windows` (wymaga Shella) |
+| Źródła | `gnome-spotlightd` (GJS, bez St/Shell) | `apps`, `files`, `settings`, `commands`, `calculator` + cache i indeks |
+
+Reguła: **rozszerzenie nie wykonuje żadnej enumeracji** (żadnego `get_installed()`, `AppInfo.get_all()`,
+`locate`) w ścieżce wpisywania. Wolno mu tylko: odpytać daemon po D-Bus, zmergować z `windows`,
+dołożyć boost frecency i wyrenderować.
+
+### Protokół — własny interfejs (bogatszy niż SearchProvider2)
+
+```
+Bus name:   org.gnome.Spotlight
+Object:     /org/gnome/Spotlight/Search
+Interface:  org.gnome.Spotlight.Search
+  Search(s query, s mode, i limit) -> (aa{sv} results, s stats)
+  ResultMeta(id, name, description, icon, kind, provider, score, path, actions)
+```
+`mode`: `''` (wszystko), `'files'`, `'commands'`, `'apps'`, `'settings'`. `stats` = JSON
+`{"total": n, "truncated": bool, "ms": {provider: ms}}`.
+
+### Adapter dla natywnego wyszukiwania (bonus)
+
+Ten sam proces implementuje `org.gnome.Shell.SearchProvider2`:
+`GetInitialResultSet`, `GetSubsearchResultSet`, `GetResultMetas`, `ActivateResult`, `LaunchSearch`.
+Rejestracja: `~/.local/share/gnome-shell/search-providers/org.gnome.Spotlight.SearchProvider.ini`
+(`DesktopId`, `BusName`, `ObjectPath`, `Version=2`, `AutoStart=true`). Dzięki temu te same wyniki
+pojawiają się w natywnym wyszukiwaniu w Activities — bez duplikowania logiki.
+
+### Uruchamianie i degradacja
+
+- Aktywacja przez D-Bus (`~/.local/share/dbus-1/services/org.gnome.Spotlight.service`), opcjonalnie
+  `systemd --user` unit `gnome-spotlightd.service` (`Restart=on-failure`, `MemoryMax=256M`).
+- Brak daemona / błąd / timeout 150 ms → rozszerzenie wraca do ścieżki in-process (dzisiejszy kod)
+  i pokazuje w stopce `offline`; nigdy nie blokuje UI.
+- Daemon nie dotyka sieci ani dysku poza `locate` i cache w `$XDG_CACHE_HOME/gnome-spotlight/`.
+
+### Budżety (mierzone bramką)
+
+| Miara | Limit |
+|---|---|
+| Otwarcie modala (skrót → pierwsza klatka) | ≤ 16 ms |
+| Pierwsze wyniki (cache ciepły) | ≤ 30 ms |
+| Odpowiedź daemona (ciepła) | p95 ≤ 30 ms, max ≤ 150 ms |
+| Zestawienie pętli głównej Shella podczas wpisywania (sonda D-Bus) | max ≤ 50 ms |
+| Zimny start daemona | ≤ 300 ms |
+
+### Reużycie kodu
+
+`lib/**` zostaje PURE i jest współdzielone: daemon importuje `ranking`, `fuzzy`, `text`, `calculator`,
+`format`, `usage`, `cache`; rozszerzenie importuje to samo. Provider `windows` i całe `lib/ui/**`
+zostają wyłącznie w rozszerzeniu.
