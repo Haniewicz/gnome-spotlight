@@ -98,7 +98,7 @@ DAEMON_LOG="$TMP_ROOT/daemon.log"
       fi
     }
     trap cleanup_daemon EXIT
-    trap 'cleanup_daemon; exit 143' TERM INT
+    trap "cleanup_daemon; exit 143" TERM INT
 
     # No systemctl --user dependency: launch the daemon directly in this
     # isolated session. If a service already owns the name, the new process

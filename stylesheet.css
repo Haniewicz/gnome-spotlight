@@ -5,9 +5,7 @@
   background-color: rgba(26,27,34,0.93);
   border: 1px solid rgba(255,255,255,0.11);
   border-radius: 18px;
-  box-shadow: 0 40px 90px rgba(0,0,0,0.62),
-              0 8px 26px rgba(0,0,0,0.45),
-              inset 0 1px 0 rgba(255,255,255,0.08);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.45);
   color: #ffffff;
 }
 
@@ -26,7 +24,6 @@
   color: #ffffff;
   background-color: transparent;
   border-width: 0;
-  box-shadow: none;
   padding: 0;
   caret-color: #3584e4;
   selection-background-color: rgba(53,132,228,0.45);
@@ -82,7 +79,6 @@
   border-radius: 11px;
   border-width: 0;
   background-color: transparent;
-  box-shadow: none;
   color: #ffffff;
 }
 
@@ -101,7 +97,8 @@
 .spotlight-row-selected,
 .spotlight-row-selected:hover {
   background-color: rgba(53,132,228,0.27);
-  box-shadow: inset 0 0 0 1px rgba(92,163,255,0.42);
+  border: 1px solid rgba(92,163,255,0.42);
+  padding: 6px 11px;
 }
 
 .spotlight-row-icon {
@@ -141,7 +138,6 @@
   border-radius: 20px;
   margin-bottom: 14px;
   background-color: rgba(255,255,255,0.08);
-  box-shadow: 0 10px 26px rgba(0,0,0,0.50);
 }
 
 .spotlight-preview-icon {
@@ -220,7 +216,6 @@
   background-gradient-start: #4a92ef;
   background-gradient-end: #3584e4;
   border-color: #5b9df2;
-  box-shadow: 0 4px 12px rgba(53,132,228,0.35);
   color: #ffffff;
 }
 

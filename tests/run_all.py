@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Spotlight acceptance gate.
 
-Zero external dependencies. Exit code 0 means every check (metadata, GSettings
-schema, PURE module isolation and the gjs test suites) passed.
+Zero external dependencies. Exit code 0 means every check (metadata, stylesheet
+shadows, GSettings schema, PURE module isolation and the gjs test suites)
+passed.
 
 Usage: python3 tests/run_all.py
 """
@@ -23,6 +24,14 @@ TESTS_DIR = ROOT / "tests" / "js"
 
 UUID = "spotlight@haniewicz.dev"
 SCHEMA_ID = "org.gnome.shell.extensions.spotlight"
+
+# St rasterizes box-shadow on every layer repaint and ignores shadows after the
+# first comma-separated layer. Keep exactly one inexpensive shadow on the modal
+# and reject shadows anywhere else (selection borders use a real border).
+SHADOW_SELECTOR = ".spotlight-modal"
+MAX_SHADOW_BLUR_PX = 16.0
+COLOR_RE = re.compile(r"(?:rgba?|hsla?)\([^)]*\)|#[0-9a-fA-F]{3,8}")
+LENGTH_RE = re.compile(r"(?<![\w.#-])(-?(?:\d+(?:\.\d*)?|\.\d+))([a-zA-Z%]*)(?![\w-])")
 
 EXPECTED_KEYS = {
     "toggle-keybinding": "as",
@@ -117,12 +126,131 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def split_top_level(value: str, separator: str) -> list[str]:
+    """Split a CSS value on a separator outside parentheses."""
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for character in value:
+        if character == "(":
+            depth += 1
+        elif character == ")" and depth > 0:
+            depth -= 1
+
+        if character == separator and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(character)
+
+    parts.append("".join(current).strip())
+    return parts
+
+
 def check_required_files() -> None:
     missing = [name for name in REQUIRED_FILES if not (ROOT / name).is_file()]
     if missing:
         fail(f"missing required files: {', '.join(missing)}")
     else:
         ok(f"required files present ({len(REQUIRED_FILES)})")
+
+
+def check_stylesheet() -> None:
+    """Guard the cheap-shadow contract from the P0 rendering regression.
+
+    St renders each box-shadow layer in software on every repaint and only
+    honours the first layer. A single <=16px blur on the modal is allowed;
+    every other selector must use a border/background instead.
+    """
+    path = ROOT / "stylesheet.css"
+    if not path.is_file():
+        fail("stylesheet.css is missing")
+        return
+
+    source = re.sub(r"/\*.*?\*/", "", read_text(path), flags=re.DOTALL)
+    shadows: list[tuple[str, str]] = []
+    errors: list[str] = []
+
+    for rule in re.finditer(r"([^{}]+)\{([^{}]*)\}", source):
+        selector = " ".join(rule.group(1).split())
+        declarations = split_top_level(rule.group(2), ";")
+        for declaration in declarations:
+            if ":" not in declaration:
+                continue
+            property_name, value = declaration.split(":", 1)
+            if property_name.strip().lower() != "box-shadow":
+                continue
+
+            value = value.strip()
+            shadows.append((selector, value))
+
+            if selector != SHADOW_SELECTOR:
+                errors.append(
+                    f"box-shadow is only allowed in {SHADOW_SELECTOR}, "
+                    f"found in {selector!r}"
+                )
+                continue
+
+            layers = split_top_level(value, ",")
+            if len(layers) != 1:
+                errors.append(
+                    f"{selector}: expected exactly one shadow layer, "
+                    f"found {len(layers)}"
+                )
+                continue
+
+            # Color functions contain numbers; strip them before looking for
+            # the 2-4 length components of the shadow.
+            lengths = LENGTH_RE.findall(
+                COLOR_RE.sub(" ", value)
+            )
+            if len(lengths) < 3:
+                errors.append(
+                    f"{selector}: shadow needs offset-x, offset-y and blur, "
+                    f"found {len(lengths)} length(s)"
+                )
+                continue
+
+            for number, unit in lengths:
+                if float(number) != 0 and unit.lower() != "px":
+                    errors.append(
+                        f"{selector}: shadow lengths must use px, "
+                        f"found {number}{unit}"
+                    )
+                    break
+
+            blur_number, blur_unit = lengths[2]
+            blur = float(blur_number)
+            if blur < 0:
+                errors.append(f"{selector}: blur must not be negative")
+            elif blur_unit.lower() != "px" and blur != 0:
+                errors.append(
+                    f"{selector}: blur must use px, found {blur}{blur_unit}"
+                )
+            elif blur > MAX_SHADOW_BLUR_PX:
+                errors.append(
+                    f"{selector}: blur {blur:g}px exceeds "
+                    f"{MAX_SHADOW_BLUR_PX:g}px"
+                )
+
+    modal_shadows = [
+        value for selector, value in shadows if selector == SHADOW_SELECTOR
+    ]
+    if not modal_shadows:
+        errors.append(f"{SHADOW_SELECTOR} must declare exactly one shadow")
+    elif len(modal_shadows) > 1:
+        errors.append(
+            f"{SHADOW_SELECTOR} declares {len(modal_shadows)} box-shadow "
+            "properties, expected one"
+        )
+
+    if errors:
+        fail("stylesheet.css: " + "; ".join(errors))
+    else:
+        ok(
+            "stylesheet.css: single modal box-shadow, blur <= "
+            f"{MAX_SHADOW_BLUR_PX:g}px, no other shadows"
+        )
 
 
 def check_metadata() -> None:
@@ -403,6 +531,7 @@ def main() -> int:
 
     check_required_files()
     check_metadata()
+    check_stylesheet()
     check_schema()
     check_pure_modules()
     check_daemon_isolation()
