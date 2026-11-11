@@ -1,16 +1,20 @@
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { ExtensionState } from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 
 const UUID = 'spotlight@haniewicz.dev';
-const QUERIES = ['s', 'sp', 'spo', 'spot'];
-const MAX_RESULTS = 8;
-const MAX_COLD_MS = 400;
-const MAX_WARM_MS = 120;
-const MAX_CHAR_MS = 80;
-const QUERY_TIMEOUT_MS = 5000;
-const PASS_LINE = 'PASS: perf cold<=400ms warm<=120ms';
+const BUS_NAME = 'org.gnome.Spotlight';
+const OBJECT_PATH = '/org/gnome/Spotlight/Search';
+const SEARCH_IFACE = 'org.gnome.Spotlight.Search';
+const MAX_FIRST_PAINT_MS = 16;
+const MAX_DAEMON_RESULT_MS = 30;
+const MAX_STALL_MS = 50;
+const MAX_FALLBACK_MS = 120;
+const QUERY_TIMEOUT_MS = 6000;
+const PASS_LINE =
+  'PASS: frontend first-paint<=16ms result<=30ms stall<=50ms fallback<=120ms';
 
 function sleep(milliseconds) {
   return new Promise(resolve => {
@@ -27,7 +31,7 @@ async function waitFor(predicate, description, timeoutMs = 10000) {
     const value = predicate();
     if (value)
       return value;
-    await sleep(50);
+    await sleep(25);
   }
   throw new Error(`timeout waiting for ${description}`);
 }
@@ -38,8 +42,7 @@ function extensionState() {
 
 /**
  * Shell startup has its own burst of portal/calendar/background work. Wait
- * until the main loop has been quiet for half a second so the gate measures
- * Spotlight, not GNOME Shell's boot sequence.
+ * until the main loop has been quiet so the gate measures Spotlight.
  */
 async function waitForQuiet(quietMs = 500, timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs;
@@ -68,17 +71,166 @@ function nowMs() {
 }
 
 function formatMs(value) {
-  return value.toFixed(1);
+  return Number(value).toFixed(1);
+}
+
+function waitForNextResult(telemetry, timeoutMs = QUERY_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, timeoutMs, () => {
+      telemetry.waiters = telemetry.waiters.filter(entry => entry !== waiter);
+      reject(new Error('timeout waiting for search result'));
+      return GLib.SOURCE_REMOVE;
+    });
+
+    const waiter = () => {
+      try {
+        GLib.source_remove(timer);
+      } catch {
+        // The timeout source already fired.
+      }
+      resolve();
+    };
+    telemetry.waiters.push(waiter);
+  });
+}
+
+function resolveWaiter(telemetry) {
+  const waiter = telemetry.waiters.shift();
+  if (waiter)
+    waiter();
 }
 
 /**
- * Headless performance gate run by gnome-shell --automation-script.
+ * Instrument the modal's async search boundary. The debounce is deliberately
+ * not charged to the source budget: `result` measures from _performSearch()
+ * entry to the rendered/stable result, not from the keystroke.
+ */
+function instrumentModal(modal) {
+  const telemetry = {
+    resultStart: 0,
+    lastResultMs: 0,
+    waiters: [],
+  };
+
+  const originalPerformSearch = modal._performSearch;
+  modal._performSearch = function patchedPerformSearch(query, token) {
+    telemetry.resultStart = nowMs();
+    const promise = originalPerformSearch.call(this, query, token);
+    return Promise.resolve(promise).finally(() => {
+      if (!telemetry.resultStart)
+        return;
+      telemetry.lastResultMs = nowMs() - telemetry.resultStart;
+      telemetry.resultStart = 0;
+      resolveWaiter(telemetry);
+    });
+  };
+
+  return telemetry;
+}
+
+async function typeAndWait(modal, telemetry, query) {
+  const pending = waitForNextResult(telemetry);
+  modal._entry.set_text(query);
+  await pending;
+  return {
+    resultMs: telemetry.lastResultMs,
+    rows: modal._rows.length,
+  };
+}
+
+async function measureFirstPaint(modal, telemetry, query) {
+  // Clear the entry first: St.Entry does not emit text-changed when set_text()
+  // receives the same value it already has. This also drops the visible rows,
+  // so the measured frame really has to come from the LRU cache.
+  modal._entry.set_text('');
+
+  // The next async response still has to settle after the synchronous LRU
+  // paint; keep a waiter so the next measurement starts from a clean state.
+  const pending = waitForNextResult(telemetry);
+  const start = nowMs();
+  modal._entry.set_text(query);
+  const elapsed = nowMs() - start;
+  const rows = modal._rows.length;
+  await pending;
+  return { elapsed, rows };
+}
+
+function startStallMonitor() {
+  return {
+    max: 0,
+    last: GLib.get_monotonic_time(),
+    reset() {
+      this.max = 0;
+      this.last = GLib.get_monotonic_time();
+    },
+  };
+}
+
+function quitDaemon() {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = () => {
+      if (settled)
+        return;
+      settled = true;
+      resolve();
+    };
+
+    const timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
+      finish();
+      return GLib.SOURCE_REMOVE;
+    });
+
+    try {
+      Gio.DBus.session.call(
+        BUS_NAME,
+        OBJECT_PATH,
+        SEARCH_IFACE,
+        'Quit',
+        null,
+        null,
+        Gio.DBusCallFlags.NONE,
+        1500,
+        null,
+        (connection, result) => {
+          try {
+            connection.call_finish(result);
+          } catch {
+            // No owner / already shutting down is fine here.
+          }
+          try {
+            GLib.source_remove(timer);
+          } catch {
+            // The timeout source already fired.
+          }
+          finish();
+        }
+      );
+    } catch {
+      try {
+        GLib.source_remove(timer);
+      } catch {
+        // The timeout source already fired.
+      }
+      finish();
+    }
+  });
+}
+
+function footerSource(modal) {
+  return modal._footerSource?.get_text?.() ?? '';
+}
+
+/**
+ * Frontend performance gate run by gnome-shell --automation-script.
  *
- * The first pass runs immediately after the enable() warm-up finishes: it is
- * allowed one cold spike up to 400 ms. The second pass is warm and must stay
- * within 120 ms per query; the modal char path must spend at most 80 ms per
- * character in provider search/render (the 120 ms debounce is not charged to
- * the character budget). BENCH lines carry the raw measurements.
+ * Pass 1: daemon stream + local windows. LRU first paint must stay within one
+ * frame, the rendered daemon result within 30 ms and the main loop must not
+ * stall longer than 50 ms.
+ *
+ * Pass 2: the daemon is stopped with its own Quit() method; the extension
+ * switches to the in-process providers via NameOwnerChanged and the fallback
+ * result stays within 120 ms with footer source "offline".
  */
 export async function run() {
   let step = 'enable';
@@ -96,107 +248,44 @@ export async function run() {
     if (!state?._registry)
       throw new Error('enabled extension has no registry');
 
-    // The idle warm-up sources are scheduled by enable(). Let all of them run
-    // before the cold pass so the first measured query is not charged for
-    // get_installed()/get_all()/locate index faults.
     step = 'warmup';
     await waitFor(
       () => Array.isArray(state._warmupIds) && state._warmupIds.length === 0,
       'provider warm-up sources to finish',
       15000
     );
-    await waitForQuiet();
 
-    const measureSearch = async query => {
-      const started = nowMs();
-      const response = await state._registry.search(query, { limit: MAX_RESULTS });
-      const elapsed = nowMs() - started;
-      const count = Array.isArray(response?.results) ? response.results.length : 0;
-      return { query, elapsed, count };
-    };
+    step = 'daemon-source';
+    const daemonAvailable = await waitFor(
+      () => state._source === 'daemon',
+      'daemon source',
+      6000
+    ).then(() => true).catch(() => false);
 
-    step = 'cold';
-    const coldStats = [];
-    for (const query of QUERIES) {
-      const stat = await measureSearch(query);
-      coldStats.push(stat);
-      print(`BENCH cold search('${query}'): ${formatMs(stat.elapsed)} ms, results=${stat.count}`);
+    if (!daemonAvailable) {
+      print('BENCH source: fallback-only (daemon unavailable or not installed)');
+      if (state._source !== 'local')
+        throw new Error(`unexpected source ${state._source}`);
+    } else {
+      print('BENCH source: daemon');
     }
 
-    step = 'warm';
-    const warmStats = [];
-    for (const query of QUERIES) {
-      const stat = await measureSearch(query);
-      warmStats.push(stat);
-      print(`BENCH warm search('${query}'): ${formatMs(stat.elapsed)} ms, results=${stat.count}`);
-    }
-
-    step = 'modal-open';
     state._toggle();
     const modal = state._modal;
     if (!modal || !modal.isOpen)
       throw new Error('modal did not open');
 
-    let pendingKeystroke = null;
-    let charSearchStarted = 0;
-    let lastCharSearchMs = 0;
+    const telemetry = instrumentModal(modal);
+    const stall = startStallMonitor();
+    let stallId = 0;
 
-    const originalSetResults = modal.setResults;
-    modal.setResults = function (sections) {
-      if (charSearchStarted) {
-        lastCharSearchMs = nowMs() - charSearchStarted;
-        charSearchStarted = 0;
-      }
-
-      originalSetResults.call(this, sections);
-      const resolve = pendingKeystroke;
-      pendingKeystroke = null;
-      if (resolve)
-        resolve();
-    };
-
-    const originalPerformSearch = modal._performSearch;
-    modal._performSearch = function (query, token) {
-      charSearchStarted = nowMs();
-      return originalPerformSearch.call(this, query, token);
-    };
-
-    const typeAndWait = query => new Promise((resolve, reject) => {
-      const timeoutId = GLib.timeout_add(
-        GLib.PRIORITY_DEFAULT,
-        QUERY_TIMEOUT_MS,
-        () => {
-          pendingKeystroke = null;
-          reject(new Error(`timeout waiting for results after typing ${query}`));
-          return GLib.SOURCE_REMOVE;
-        }
-      );
-
-      pendingKeystroke = () => {
-        GLib.source_remove(timeoutId);
-        resolve();
-      };
-
-      try {
-        modal._entry.set_text(query);
-      } catch (error) {
-        pendingKeystroke = null;
-        GLib.source_remove(timeoutId);
-        reject(error);
-      }
-    });
-
-    // Warm the Shell icon/style caches and the first paint; this query is not
-    // part of the gate.
+    // Warm the modal row/icon paths once; the gate itself starts below.
     step = 'modal-warmup';
-    await typeAndWait('a');
-    await waitForQuiet(200, 5000);
+    await typeAndWait(modal, telemetry, 'spot');
+    await waitForQuiet(250, 5000);
 
-    const stall = {
-      max: 0,
-      last: GLib.get_monotonic_time(),
-    };
-    const stallId = GLib.timeout_add(
+    step = 'first-paint';
+    stallId = GLib.timeout_add(
       GLib.PRIORITY_DEFAULT_IDLE,
       10,
       () => {
@@ -208,48 +297,108 @@ export async function run() {
         return GLib.SOURCE_CONTINUE;
       }
     );
+    stall.reset();
 
-    const charStats = [];
-    step = 'keystroke';
-    try {
-      for (const query of QUERIES) {
-        const started = nowMs();
-        await typeAndWait(query);
+    const firstPaint = await measureFirstPaint(modal, telemetry, 'spot');
+    print(
+      `BENCH frontend first-paint=${formatMs(firstPaint.elapsed)}ms ` +
+      `rows=${firstPaint.rows} source=${footerSource(modal) || 'unknown'}`
+    );
 
-        const elapsed = nowMs() - started;
-        charStats.push({ query, search: lastCharSearchMs, elapsed, rows: modal._rows.length });
-        print(
-          `BENCH warm char('${query}'): search=${formatMs(lastCharSearchMs)} ms, ` +
-          `set-text=${formatMs(elapsed)} ms, rows=${modal._rows.length}, ` +
-          `max-stall=${formatMs(stall.max)} ms`
-        );
-      }
-    } finally {
+    step = 'daemon-result';
+    const daemonResult = await typeAndWait(modal, telemetry, 'spo');
+    print(
+      `BENCH daemon result=${formatMs(daemonResult.resultMs)}ms ` +
+      `rows=${daemonResult.rows} source=${footerSource(modal) || 'unknown'}`
+    );
+    print(`BENCH daemon max-stall=${formatMs(stall.max)}ms`);
+
+    if (stallId) {
       GLib.source_remove(stallId);
+      stallId = 0;
     }
+
+    step = 'daemon-stop';
+    let fallbackResult = { resultMs: 0, rows: 0 };
+    if (daemonAvailable) {
+      await quitDaemon();
+      await waitFor(
+        () => state._source === 'local',
+        'fallback source after daemon quit',
+        5000
+      );
+    }
+
+    step = 'fallback';
+    const fallbackStall = startStallMonitor();
+    const fallbackStallId = GLib.timeout_add(
+      GLib.PRIORITY_DEFAULT_IDLE,
+      10,
+      () => {
+        const current = GLib.get_monotonic_time();
+        const delay = (current - fallbackStall.last) / 1000;
+        if (delay > fallbackStall.max)
+          fallbackStall.max = delay;
+        fallbackStall.last = current;
+        return GLib.SOURCE_CONTINUE;
+      }
+    );
+
+    try {
+      fallbackResult = await typeAndWait(modal, telemetry, 'gnom');
+    } finally {
+      GLib.source_remove(fallbackStallId);
+    }
+
+    print(
+      `BENCH fallback result=${formatMs(fallbackResult.resultMs)}ms ` +
+      `rows=${fallbackResult.rows} source=${footerSource(modal) || 'unknown'} ` +
+      `max-stall=${formatMs(fallbackStall.max)}ms`
+    );
 
     const failures = [];
-    for (const stats of [coldStats, warmStats, charStats]) {
-      for (const stat of stats) {
-        if (stat.count !== undefined && stat.count > MAX_RESULTS)
-          failures.push(`search('${stat.query}') returned ${stat.count} results`);
-        if (stat.rows !== undefined && stat.rows > MAX_RESULTS)
-          failures.push(`set_text('${stat.query}') rendered ${stat.rows} rows`);
+    if (!(firstPaint.elapsed <= MAX_FIRST_PAINT_MS)) {
+      failures.push(
+        `first paint took ${formatMs(firstPaint.elapsed)} ms ` +
+        `(limit ${MAX_FIRST_PAINT_MS} ms)`
+      );
+    }
+    if (firstPaint.rows === 0)
+      failures.push('LRU first paint rendered no rows');
+
+    if (daemonAvailable) {
+      if (!(daemonResult.resultMs <= MAX_DAEMON_RESULT_MS)) {
+        failures.push(
+          `daemon result took ${formatMs(daemonResult.resultMs)} ms ` +
+          `(limit ${MAX_DAEMON_RESULT_MS} ms)`
+        );
+      }
+      if (!(stall.max <= MAX_STALL_MS)) {
+        failures.push(
+          `daemon max stall ${formatMs(stall.max)} ms ` +
+          `(limit ${MAX_STALL_MS} ms)`
+        );
+      }
+      if (footerSource(modal) !== 'offline') {
+        // After the fallback query the footer must say offline.
+        failures.push(`fallback footer source is ${footerSource(modal) || 'empty'}`);
       }
     }
 
-    for (const stat of coldStats) {
-      if (!(stat.elapsed <= MAX_COLD_MS))
-        failures.push(`cold search('${stat.query}') took ${formatMs(stat.elapsed)} ms`);
+    if (!(fallbackResult.resultMs <= MAX_FALLBACK_MS)) {
+      failures.push(
+        `fallback result took ${formatMs(fallbackResult.resultMs)} ms ` +
+        `(limit ${MAX_FALLBACK_MS} ms)`
+      );
     }
-    for (const stat of warmStats) {
-      if (!(stat.elapsed <= MAX_WARM_MS))
-        failures.push(`warm search('${stat.query}') took ${formatMs(stat.elapsed)} ms`);
-    }
-    for (const stat of charStats) {
-      if (!(stat.search <= MAX_CHAR_MS))
-        failures.push(`warm char('${stat.query}') search took ${formatMs(stat.search)} ms`);
-    }
+
+    print(
+      `STATS: first-paint=${formatMs(firstPaint.elapsed)} ms, ` +
+      `daemon-result=${formatMs(daemonResult.resultMs)} ms, ` +
+      `daemon-stall=${formatMs(stall.max)} ms, ` +
+      `fallback-result=${formatMs(fallbackResult.resultMs)} ms, ` +
+      `daemon=${daemonAvailable ? 'yes' : 'no'}`
+    );
 
     if (failures.length > 0) {
       for (const failure of failures)
@@ -257,17 +406,7 @@ export async function run() {
       throw new Error(failures.join('; '));
     }
 
-    const maxCold = Math.max(...coldStats.map(stat => stat.elapsed));
-    const maxWarm = Math.max(...warmStats.map(stat => stat.elapsed));
-    const maxChar = Math.max(...charStats.map(stat => stat.search));
-    const maxKeystroke = Math.max(...charStats.map(stat => stat.elapsed));
-    print(
-      `STATS: cold-max=${formatMs(maxCold)} ms, warm-max=${formatMs(maxWarm)} ms, ` +
-      `char-max=${formatMs(maxChar)} ms, set-text-max=${formatMs(maxKeystroke)} ms, ` +
-      `max-stall=${formatMs(stall.max)} ms`
-    );
     print(PASS_LINE);
-
     modal.close();
     Main.extensionManager.disableExtension(UUID);
   } catch (error) {

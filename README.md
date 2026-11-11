@@ -118,29 +118,78 @@ rozszerzenie skopiowane do tymczasowego `XDG_DATA_HOME`):
 bash tools/headless-smoke.sh
 ```
 
-Skrypt wypisuje `PASS: modal-open modal-typed modal-esc modal-closed` i kończy
+Skrypt wypisuje `PASS: modal-open modal-typed modal-esc modal-closed preview-text` i kończy
 się kodem 0. Gdy w środowisku brakuje `gnome-shell` albo nie da się ustawić
 `GI_TYPELIB_PATH`, wypisuje `SKIP: <powód>` i kończy się kodem 3. Inne błędy
 Shella oznaczają kod ≠ 0.
 
-Bramka wydajnościowa (ten sam izolowany, headless Shell):
+Bramka wydajnościowa frontendu (ten sam izolowany, headless Shell):
 
 ```bash
 bash tools/headless-perf.sh
 ```
 
-Skrypt mierzy `registry.search()` dla `s`, `sp`, `spo`, `spot` w dwóch
-przebiegach (zimny po warm-upie oraz ciepły) i ścieżkę `set_text()` z monitorem
-zacięć pętli głównej co 10 ms. Wypisuje linie `BENCH` z rzeczywistymi czasami i
-liczbą wyników, a na końcu `PASS: perf cold<=400ms warm<=120ms`. Kod 0 wymaga:
-zimny przebieg ≤ 400 ms na zapytanie, ciepły ≤ 120 ms na zapytanie i ≤ 80 ms
-pracy providerów na znak (debounce 120 ms nie jest wliczany do budżetu znaku).
-Brak `gnome-shell`/typelibów daje `SKIP:` i kod 3.
+Skrypt uruchamia daemon bezpośrednio (`gjs -m searchd/main.js`) w izolowanej
+sesji D-Bus, a następnie mierzy modal: synchroniczne pierwsze malowanie z LRU
+(`first-paint ≤ 16 ms`), czas wyniku daemona (`≤ 30 ms`) i najdłuższe zacięcie
+pętli głównej (`≤ 50 ms`). Po `Quit()` daemona ten sam przebieg sprawdza
+fallback in-process (`≤ 120 ms`, stopka `offline`) i kończy się dosłowną linią
+`PASS: frontend first-paint<=16ms result<=30ms stall<=50ms fallback<=120ms`.
+Wypisuje też linie `BENCH` z surowymi pomiarami. Brak daemona nie blokuje
+bramki: mierzy wtedy sam fallback. Brak `gnome-shell`/typelibów daje `SKIP:` i
+kod 3.
+
+Benchmark D-Bus daemona (stały klient `gjs`, bez narzutu spawnu `busctl` na
+każde zapytanie):
+
+```bash
+bash tools/bench-daemon.sh
+```
+
+Wypisuje `BENCH` dla 100 wywołań (`p50`/`p95`/`max`) oraz osobno wewnętrzne
+`stats.ms` providerów apps/files/settings. Próg: `p95 <= 30 ms`, `max <= 150 ms`.
 
 Limit `max-results` jest wspólny dla wszystkich providerów i stosowany po
 rankingu: łącznie powstaje najwyżej N wyników, a sekcja pojedynczego providera
 nie przekracza `perProviderLimit` (domyślnie N). Dzięki temu wpisanie jednego
 znaku nie tworzy setek wierszy St.
+
+## Daemon vs fallback
+
+Rozszerzenie jest frontendem: po `enable()` sonduje `org.gnome.Spotlight`
+(200 ms) i wybiera źródło. W trybie `daemon` wysyła `Search` po D-Bus i
+równolegle odpytuje tylko lokalny provider `windows`; nie robi
+`get_installed()`, `Gio.AppInfo.get_all()` ani `locate` w ścieżce wpisywania.
+Brak daemona, timeout 150 ms lub błąd D-Bus przełącza na dotychczasową ścieżkę
+in-process.
+
+Źródło widać w stopce modala:
+
+- `daemon` — wynik przyszedł z `gnome-spotlightd` (obok suma `stats.ms`),
+- `offline` — daemon jest zatrzymany albo nie odpowiedział; działa fallback
+  lokalny.
+
+Sprawdzenie i przełączanie bez restartu Shella:
+
+```bash
+# stan i zatrzymanie daemona systemd --user
+systemctl --user status gnome-spotlightd.service
+systemctl --user stop gnome-spotlightd.service
+
+# ponowne uruchomienie
+systemctl --user start gnome-spotlightd.service
+
+# wariant bez systemd: daemon w tle z repozytorium
+gjs -m searchd/main.js &
+kill %1
+```
+
+Po zatrzymaniu daemona wpisz zapytanie ponownie — stopka pokaże `offline`, a
+wyniki nadal się pojawią. Po starcie daemona (`NameOwnerChanged`) rozszerzenie
+samo wróci do `daemon`; nie trzeba wyłączać ani włączać rozszerzenia.
+`tools/install-daemon.sh` wybiera jednego właściciela nazwy: gdy działa
+`systemd --user`, instaluje i uruchamia unit, a plik aktywacji D-Bus usuwa;
+bez systemd zostawia wyłącznie aktywację D-Bus.
 
 ## Struktura
 
@@ -150,14 +199,18 @@ prefs.js                # okno preferencji Adwaita
 metadata.json
 stylesheet.css
 schemas/                # GSettings
-lib/                    # PURE: ranking, fuzzy, text, calculator, format, usage
+lib/                    # PURE: ranking, fuzzy, text, calculator, format, usage,
+                        #       searchStream (merge/stabilize/LRU)
+lib/daemonClient.js     # Gio.DBus: probe, Search, NameOwnerChanged, cancel
 lib/providers/          # aplikacje, okna, ustawienia, komendy, pliki, kalkulator
 lib/ui/                 # modal, wiersz wyniku, podgląd, menu akcji
 tools/deploy.sh
+tools/install-daemon.sh    # daemon: systemd --user albo aktywacja D-Bus
+tools/bench-daemon.sh      # 100 wywołań D-Bus stałym klientem gjs
 tools/headless-smoke.sh
 tools/headless-perf.sh
 tests/run_all.py
 tests/js/               # testy PURE (gjs -m)
 tests/headless/smoke.js # skrypt automatyzacji Shella
-tests/headless/perf.js  # pomiary search/set_text w headless Shellu
+tests/headless/perf.js  # first-paint/result/stall daemon + fallback w Shellu
 ```

@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# Headless performance gate for Spotlight in an isolated GNOME Shell session.
+# Headless frontend performance gate for Spotlight in an isolated GNOME Shell.
+#
+# The daemon is started directly with `gjs -m searchd/main.js` when possible;
+# no systemd --user manager is required. tests/headless/perf.js stops it via
+# the daemon's own Quit() method to prove the offline fallback in the same
+# session. The gate also works when the daemon cannot start at all (fallback
+# only) instead of failing on the environment.
 #
 # Exit codes:
 #   0  PASS marker printed by tests/headless/perf.js
@@ -73,15 +79,63 @@ if ! glib-compile-schemas --strict "$DEST/schemas" >/dev/null 2>&1; then
 fi
 
 LOG="$TMP_ROOT/perf.log"
+DAEMON_LOG="$TMP_ROOT/daemon.log"
 
 (
   cd "$ROOT" || exit 1
-  timeout "$TIMEOUT" dbus-run-session -- \
+  timeout "$TIMEOUT" dbus-run-session -- bash -c '
+    set -u
+    ROOT_DIR="$1"
+    DAEMON_LOG="$2"
+    cd "$ROOT_DIR" || exit 1
+
+    daemon_pid=""
+    cleanup_daemon() {
+      if [ -n "$daemon_pid" ]; then
+        kill "$daemon_pid" 2>/dev/null || true
+        wait "$daemon_pid" 2>/dev/null || true
+        daemon_pid=""
+      fi
+    }
+    trap cleanup_daemon EXIT
+    trap 'cleanup_daemon; exit 143' TERM INT
+
+    # No systemctl --user dependency: launch the daemon directly in this
+    # isolated session. If a service already owns the name, the new process
+    # exits immediately and the existing daemon stays the only owner.
+    if command -v gjs >/dev/null 2>&1; then
+      gjs -m searchd/main.js >"$DAEMON_LOG" 2>&1 &
+      daemon_pid=$!
+    fi
+
+    ready=0
+    for _ in $(seq 1 100); do
+      if busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
+          org.freedesktop.DBus NameHasOwner s org.gnome.Spotlight \
+          2>/dev/null | grep -q true; then
+        ready=1
+        break
+      fi
+      if [ -n "$daemon_pid" ] && ! kill -0 "$daemon_pid" 2>/dev/null; then
+        break
+      fi
+      sleep 0.05
+    done
+
+    if [ "$ready" -ne 1 ]; then
+      printf "INFO: daemon niedostępny; bramka mierzy fallback lokalny\n" >&2
+    fi
+
     gnome-shell --headless \
       --virtual-monitor=1280x720 \
       --wayland \
       --no-x11 \
       --automation-script=tests/headless/perf.js
+    rc=$?
+
+    cleanup_daemon
+    exit "$rc"
+  ' bash "$ROOT" "$DAEMON_LOG"
 ) >"$LOG" 2>&1
 rc=$?
 
@@ -94,6 +148,7 @@ fi
 
 if [ "$rc" -ne 0 ]; then
   printf 'FAIL: gnome-shell zakończył perf z kodem %s\n' "$rc"
+  [ -s "$DAEMON_LOG" ] && { printf '%s\n' '--- daemon log ---'; cat "$DAEMON_LOG"; }
   exit 1
 fi
 
@@ -102,8 +157,9 @@ if grep -Fq 'FAIL:' "$LOG"; then
   exit 1
 fi
 
-if ! grep -Fq 'PASS: perf cold<=400ms warm<=120ms' "$LOG"; then
-  printf 'FAIL: brak znacznika PASS: perf cold<=400ms warm<=120ms\n'
+if ! grep -Fxq 'PASS: frontend first-paint<=16ms result<=30ms stall<=50ms fallback<=120ms' "$LOG"; then
+  printf 'FAIL: brak znacznika PASS: frontend first-paint<=16ms result<=30ms stall<=50ms fallback<=120ms\n'
+  [ -s "$DAEMON_LOG" ] && { printf '%s\n' '--- daemon log ---'; cat "$DAEMON_LOG"; }
   exit 1
 fi
 

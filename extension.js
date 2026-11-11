@@ -13,8 +13,12 @@ import { createProvider as createSettingsProvider } from './lib/providers/settin
 import { createProvider as createCommandsProvider } from './lib/providers/commands.js';
 import { createProvider as createFilesProvider } from './lib/providers/files.js';
 import { createProvider as createCalculatorProvider } from './lib/providers/calculator.js';
+import { DaemonClient } from './lib/daemonClient.js';
+import { searchDaemonSources } from './lib/searchStream.js';
 
 const USAGE_SAVE_DELAY_MS = 500;
+const DAEMON_SEARCH_TIMEOUT_MS = 150;
+const WINDOWS_TIMEOUT_MS = 150;
 
 const PROVIDER_FACTORIES = {
   apps: createAppsProvider,
@@ -39,6 +43,9 @@ export default class SpotlightExtension extends Extension {
     this._enabled = false;
     this._warmupIds = [];
     this._warmupStarted = false;
+    this._daemonClient = null;
+    this._daemonProbeId = 0;
+    this._source = 'local';
   }
 
   enable() {
@@ -50,10 +57,13 @@ export default class SpotlightExtension extends Extension {
     this._usageStore = this._loadUsageStore();
     this._registry = new ProviderRegistry(this._usageStore);
     this._syncProviders();
+    this._daemonClient = this._createDaemonClient();
 
     this._modal = new SpotlightModal(this._settings, {
       registry: this._registry,
       limit: this._maxResults,
+      search: (query, options) => this._onSearchChanged(query, options),
+      getSource: () => this._source,
       onResultActivated: result => this._recordUsage(result),
       onResultPinned: result => this._pinResult(result),
     });
@@ -84,6 +94,158 @@ export default class SpotlightExtension extends Extension {
 
     this._enabled = true;
     this._scheduleWarmup();
+    this._scheduleDaemonProbe();
+  }
+
+  _createDaemonClient() {
+    try {
+      return new DaemonClient({
+        onAvailabilityChanged: available =>
+          this._onDaemonAvailabilityChanged(available),
+      });
+    } catch (error) {
+      logError(error);
+      return null;
+    }
+  }
+
+  _scheduleDaemonProbe() {
+    if (this._daemonProbeId || !this._daemonClient)
+      return;
+
+    this._daemonProbeId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+      this._daemonProbeId = 0;
+      if (!this._enabled || !this._daemonClient)
+        return GLib.SOURCE_REMOVE;
+
+      this._daemonClient.probe()
+        .then(available => {
+          if (!this._enabled)
+            return;
+          this._setSource(available ? 'daemon' : 'local');
+        })
+        .catch(() => {
+          if (this._enabled)
+            this._setSource('local');
+        });
+      return GLib.SOURCE_REMOVE;
+    });
+  }
+
+  _onDaemonAvailabilityChanged(available) {
+    if (!this._enabled)
+      return;
+
+    // NameOwnerChanged can arrive at any time. Switching here keeps the
+    // launcher live: a started daemon is used for the next keystroke, a
+    // stopped one falls back to the in-process providers without a restart.
+    this._setSource(available ? 'daemon' : 'local');
+  }
+
+  _setSource(source) {
+    const next = source === 'daemon' ? 'daemon' : 'local';
+    const changed = this._source !== next;
+    this._source = next;
+
+    this._modal?.setSource?.(next);
+    if (changed && this._modal?.isOpen)
+      this._modal.refreshSearch?.();
+  }
+
+  /**
+   * Frontend search entry point used by the modal.
+   *
+   * daemon source: D-Bus stream + Shell-local windows provider in parallel,
+   * with the in-process registry only as the timeout/offline fallback.
+   * local source: the existing registry.search() path (unchanged).
+   *
+   * @param {string} query
+   * @param {{mode?: string, limit?: number}} [options]
+   * @returns {Promise<{results: object[], stats: object, source: string}>}
+   */
+  async _onSearchChanged(query, options = {}) {
+    const requested = Number(options?.limit);
+    const limit = Number.isFinite(requested) && requested >= 0
+      ? Math.floor(requested)
+      : this._maxResults;
+    const mode = typeof options?.mode === 'string' ? options.mode : '';
+
+    if (this._source !== 'daemon' || !this._daemonClient) {
+      const response = await this._registry.search(query, { limit });
+      return {
+        results: Array.isArray(response?.results) ? response.results : [],
+        stats: this._localStats(response),
+        source: 'offline',
+      };
+    }
+
+    return searchDaemonSources({
+      query,
+      mode,
+      limit,
+      daemonSearch: (needle, searchOptions) =>
+        this._daemonClient.search(needle, {
+          mode: searchOptions.mode,
+          limit: searchOptions.limit,
+          timeoutMs: DAEMON_SEARCH_TIMEOUT_MS,
+        }),
+      localWindows: (needle, searchOptions) =>
+        this._searchWindows(needle, searchOptions.limit),
+      fallbackSearch: async needle => {
+        const response = await this._registry.search(needle, { limit });
+        return {
+          results: Array.isArray(response?.results) ? response.results : [],
+          stats: this._localStats(response),
+          source: 'offline',
+        };
+      },
+    });
+  }
+
+  _localStats(response) {
+    const ms = {};
+    for (const [providerId, value] of Object.entries(response?.timings ?? {})) {
+      const number = Number(value);
+      if (Number.isFinite(number))
+        ms[providerId] = number;
+    }
+
+    return {
+      total: Number(response?.totalMatched ?? 0),
+      truncated: Boolean(response?.truncated),
+      ms,
+    };
+  }
+
+  /**
+   * Only the Shell-local windows provider participates in the daemon path.
+   * No apps/settings/files enumeration or file-index lookup per keystroke.
+   */
+  _searchWindows(query, limit) {
+    if (!this._registry)
+      return Promise.resolve([]);
+
+    const provider = this._registry.list()
+      .find(candidate => candidate.id === 'windows');
+    if (!provider || typeof provider.search !== 'function')
+      return Promise.resolve([]);
+
+    let timer = 0;
+    const timeout = new Promise(resolve => {
+      timer = setTimeout(() => resolve([]), WINDOWS_TIMEOUT_MS);
+    });
+
+    const search = Promise.resolve()
+      .then(() => provider.search(String(query ?? ''), { limit }))
+      .then(results => Array.isArray(results) ? results : [])
+      .catch(() => []);
+
+    return Promise.race([search, timeout]).finally(() => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = 0;
+      }
+    });
   }
 
   _scheduleWarmup() {
@@ -302,6 +464,25 @@ export default class SpotlightExtension extends Extension {
   disable() {
     this._enabled = false;
     this._cancelWarmup();
+
+    if (this._daemonProbeId) {
+      try {
+        GLib.source_remove(this._daemonProbeId);
+      } catch {
+        // The idle source may already have fired.
+      }
+      this._daemonProbeId = 0;
+    }
+
+    if (this._daemonClient) {
+      try {
+        this._daemonClient.dispose();
+      } catch (error) {
+        logError(error);
+      }
+      this._daemonClient = null;
+    }
+    this._source = 'local';
 
     if (this._providersChangedId && this._settings) {
       try {

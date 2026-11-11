@@ -50,13 +50,12 @@ mkdir -p "$INSTALL_DIR"
 cp -R "$ROOT/searchd" "$INSTALL_DIR/searchd"
 cp -R "$ROOT/lib" "$INSTALL_DIR/lib"
 
-mkdir -p "$DBUS_SERVICE_DIR" "$UNIT_DIR"
-cat > "$DBUS_SERVICE" <<EOF
-[D-BUS Service]
-Name=$BUS_NAME
-Exec=$GJS_BIN -m $INSTALL_DIR/searchd/main.js
-EOF
+mkdir -p "$UNIT_DIR"
 
+# Only one mechanism may own org.gnome.Spotlight. Prefer the systemd --user
+# unit; when that manager is unavailable fall back to D-Bus activation and do
+# not leave an enabled unit behind that could race the service file.
+START_MECHANISM="D-Bus activation"
 cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=GNOME Spotlight search daemon
@@ -73,25 +72,40 @@ MemoryMax=256M
 WantedBy=default.target
 EOF
 
-printf 'INFO: wpisano %s\n' "$DBUS_SERVICE"
-printf 'INFO: wpisano %s\n' "$UNIT_FILE"
+systemd_ok=0
+if command -v systemctl >/dev/null 2>&1 &&
+   systemctl --user daemon-reload >/dev/null 2>&1; then
+  if systemctl --user enable --now "$UNIT_NAME" >/dev/null 2>&1; then
+    systemd_ok=1
+  fi
+fi
 
-# Ask the bus to pick up the newly written service file. This is harmless on
+if [ "$systemd_ok" -eq 1 ]; then
+  # systemd is the only owner: a stale D-Bus activation file would start a
+  # second process that immediately loses the name race.
+  rm -f "$DBUS_SERVICE"
+  START_MECHANISM="systemd --user ($UNIT_NAME)"
+  printf 'INFO: wpisano %s\n' "$UNIT_FILE"
+  printf 'INFO: usunięto %s (jeden właściciel nazwy: systemd --user)\n' "$DBUS_SERVICE"
+else
+  systemctl --user disable --now "$UNIT_NAME" >/dev/null 2>&1 || true
+
+  mkdir -p "$DBUS_SERVICE_DIR"
+  cat > "$DBUS_SERVICE" <<EOF
+[D-BUS Service]
+Name=$BUS_NAME
+Exec=$GJS_BIN -m $INSTALL_DIR/searchd/main.js
+EOF
+  printf 'INFO: wpisano %s\n' "$UNIT_FILE"
+  printf 'INFO: wpisano %s\n' "$DBUS_SERVICE"
+fi
+
+printf 'INFO: daemon startuje przez: %s\n' "$START_MECHANISM"
+
+# Ask the bus to pick up a newly written service file. This is harmless on
 # buses that already watch the directory and on buses without the method.
 busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
   org.freedesktop.DBus ReloadConfig >/dev/null 2>&1 || true
-
-# The card requires the systemd unit; on systems without a user manager the
-# D-Bus activation below still starts the daemon, so a failure is not fatal.
-if systemctl --user daemon-reload >/dev/null 2>&1; then
-  if systemctl --user enable --now "$UNIT_NAME" >/dev/null 2>&1; then
-    printf 'INFO: systemd --user uruchomił %s\n' "$UNIT_NAME"
-  else
-    printf 'INFO: systemctl --user enable --now nie powiódł się; używam aktywacji D-Bus\n' >&2
-  fi
-else
-  printf 'INFO: brak działającego systemd --user; używam aktywacji D-Bus\n' >&2
-fi
 
 # Trigger activation (or use the already running systemd instance) and then
 # verify both interfaces. busctl/introspection failures are reported verbatim.
@@ -150,4 +164,4 @@ if ! printf '%s\n' "$search_output" | grep -Eq 'aa\{sv\}s? [1-9][0-9]*'; then
   exit 1
 fi
 
-printf 'PASS: daemon działa; Search("spot","",8) zwrócił wyniki\n'
+printf 'PASS: daemon działa (%s); Search("spot","",8) zwrócił wyniki\n' "$START_MECHANISM"

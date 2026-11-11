@@ -56,6 +56,7 @@ PURE_MODULES = [
     "lib/gtype.js",
     "lib/files-parse.js",
     "lib/providers/registry.js",
+    "lib/searchStream.js",
     "searchd/registry.js",
     "searchd/serialize.js",
     "searchd/providers/commands.js",
@@ -77,6 +78,8 @@ REQUIRED_FILES = [
     "lib/files-parse.js",
     "lib/providers/files.js",
     "lib/providers/calculator.js",
+    "lib/daemonClient.js",
+    "lib/searchStream.js",
     "lib/ui/modal.js",
     "lib/ui/resultRow.js",
     "searchd/main.js",
@@ -89,8 +92,11 @@ REQUIRED_FILES = [
     "searchd/providers/calculator.js",
     "tools/install-daemon.sh",
     "tools/bench-daemon.sh",
+    "tools/headless-perf.sh",
     "tests/js/harness.js",
     "tests/js/daemon-registry.test.js",
+    "tests/js/searchStream.test.js",
+    "tests/headless/perf.js",
     "tests/js/files-parse.test.js",
     "tests/run_all.py",
 ]
@@ -300,6 +306,28 @@ def check_extension_esm() -> None:
         ok("extension.js is ESM and owns its keybinding lifecycle")
 
 
+def check_frontend_daemon_path() -> None:
+    """The daemon fast path in extension.js must not enumerate locally.
+
+    The in-process providers remain the fallback, but the extension itself
+    may only query the daemon and the Shell windows provider per keystroke
+    (DESIGN §13). Static check catches accidental re-introduction of the old
+    enumeration in the frontend entry point.
+    """
+    path = ROOT / "extension.js"
+    if not path.is_file():
+        fail("extension.js is missing")
+        return
+
+    source = read_text(path)
+    forbidden = ["get_installed(", "Gio.AppInfo.get_all", "AppInfo.get_all", "locate"]
+    found = [token for token in forbidden if token in source]
+    if found:
+        fail("extension.js daemon path enumerates locally: " + ", ".join(found))
+    else:
+        ok("extension.js: daemon path has no local enumeration (apps/files/settings)")
+
+
 def run_tests() -> tuple[int, int, int]:
     gjs = shutil.which("gjs")
     if gjs is None:
@@ -379,6 +407,7 @@ def main() -> int:
     check_pure_modules()
     check_daemon_isolation()
     check_extension_esm()
+    check_frontend_daemon_path()
 
     passed_files, total_passed, total_failed = run_tests()
 
