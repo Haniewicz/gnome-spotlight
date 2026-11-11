@@ -5,7 +5,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { ExtensionState } from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 
 const UUID = 'spotlight@haniewicz.dev';
-const MARKERS = ['modal-open', 'modal-typed', 'modal-esc', 'modal-closed'];
+const MARKERS = ['modal-open', 'modal-typed', 'modal-esc', 'modal-closed', 'preview-text'];
 
 function sleep(milliseconds) {
   return new Promise(resolve => {
@@ -75,6 +75,57 @@ export async function run() {
     modal._entry.set_text('spo');
     const text = modal._entry.get_text();
     assert(text.length === 3, step, `entry text is ${JSON.stringify(text)}, expected 3 characters`);
+
+    step = 'preview-text';
+    // Keep the smoke deterministic: the isolated session may have no `locate`
+    // index, so feed the modal a real file result after the query was typed.
+    modal._cancelSearch();
+    const smokePath = GLib.filename_from_uri(import.meta.url)[0];
+    const previewPath = GLib.build_filenamev([
+      GLib.path_get_dirname(
+        GLib.path_get_dirname(GLib.path_get_dirname(smokePath))
+      ),
+      'metadata.json',
+    ]);
+    const fileResult = {
+      id: previewPath,
+      providerId: 'files',
+      title: 'metadata.json',
+      subtitle: previewPath,
+      kind: 'json',
+      icon: 'text-x-generic-symbolic',
+      actions: { primary: () => {} },
+      preview: {
+        path: previewPath,
+        rows: [
+          ['Ścieżka', previewPath],
+          ['Typ', 'json'],
+        ],
+        description: previewPath,
+      },
+    };
+    modal.setResults([{ id: 'files', title: 'Pliki', results: [fileResult] }]);
+    assert(modal._rows.length === 1, step, 'file result was not added');
+    assert(modal._selectedResult() === fileResult, step, 'file result is not selected');
+
+    const preview = modal._preview;
+    assert(preview && preview.visible === true, step, 'preview panel is not visible');
+
+    const previewEvent = modal._onCapturedEvent(modal, {
+      type: () => Clutter.EventType.KEY_PRESS,
+      get_key_symbol: () => Clutter.KEY_space,
+      get_state: () => 0,
+    });
+    assert(previewEvent === Clutter.EVENT_STOP, step, 'Space did not open the text preview');
+
+    await waitFor(
+      () => preview._textScroll.visible &&
+        preview._textLabel.get_text().length > 0 &&
+        preview._textScroll.height > 0,
+      'text preview to be visible with non-zero height'
+    );
+    assert(preview.height > 0, step, `preview panel height is ${preview.height}`);
+    assert(preview._textScroll.height > 0, step, 'text preview has zero height');
 
     step = 'modal-esc';
     const result = pressEscape(modal);

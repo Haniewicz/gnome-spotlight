@@ -97,8 +97,14 @@ if [ "$rc" -ne 0 ]; then
   exit 1
 fi
 
-if ! grep -Fxq 'PASS: modal-open modal-typed modal-esc modal-closed' "$LOG"; then
-  printf 'FAIL: brak znacznika PASS: modal-open modal-typed modal-esc modal-closed\n'
+if grep -Fq 'does not implement StScrollable' "$LOG"; then
+  printf 'FAIL: St-WARNING: St.ScrollView ma dziecko spoza StScrollable:\n'
+  grep -F 'does not implement StScrollable' "$LOG"
+  exit 1
+fi
+
+if ! grep -Fxq 'PASS: modal-open modal-typed modal-esc modal-closed preview-text' "$LOG"; then
+  printf 'FAIL: brak znacznika PASS: modal-open modal-typed modal-esc modal-closed preview-text\n'
   exit 1
 fi
 
