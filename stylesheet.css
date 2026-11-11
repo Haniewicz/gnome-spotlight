@@ -14,6 +14,7 @@
 .spotlight-search-row {
   padding: 18px 20px 16px 22px;
   border-bottom: 1px solid rgba(255,255,255,0.09);
+  spacing: 14px;
 }
 
 .spotlight-search-icon {
@@ -55,6 +56,7 @@
 
 .spotlight-section-header {
   padding: 12px 14px 7px 14px;
+  spacing: 8px;
 }
 
 .spotlight-section-title {
@@ -86,6 +88,14 @@
 
 .spotlight-row:hover {
   background-color: rgba(255,255,255,0.045);
+}
+
+.spotlight-row-content {
+  spacing: 13px;
+}
+
+.spotlight-row-titles {
+  spacing: 2px;
 }
 
 .spotlight-row-selected,
@@ -125,8 +135,113 @@
   background-color: rgba(255,255,255,0.018);
 }
 
+.spotlight-preview-icon-box {
+  width: 76px;
+  height: 76px;
+  border-radius: 20px;
+  margin-bottom: 14px;
+  background-color: rgba(255,255,255,0.08);
+  box-shadow: 0 10px 26px rgba(0,0,0,0.50);
+}
+
+.spotlight-preview-icon {
+  color: #ffffff;
+}
+
+.spotlight-preview-title {
+  font-size: 19px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.spotlight-preview-kind {
+  font-size: 12px;
+  color: rgba(255,255,255,0.58);
+  margin-top: 3px;
+}
+
+.spotlight-preview-divider {
+  height: 1px;
+  background-color: rgba(255,255,255,0.09);
+  margin: 16px 0 13px 0;
+}
+
+.spotlight-preview-meta {
+  font-size: 11.5px;
+  spacing: 7px;
+}
+
+.spotlight-preview-meta-row {
+  min-height: 16px;
+  spacing: 10px;
+}
+
+.spotlight-preview-meta-label {
+  font-size: 11.5px;
+  color: rgba(255,255,255,0.34);
+}
+
+.spotlight-preview-meta-value {
+  font-size: 11.5px;
+  color: rgba(255,255,255,0.78);
+  text-align: right;
+}
+
+.spotlight-preview-scroll {
+  margin-top: 13px;
+  max-height: 260px;
+  border-radius: 9px;
+  background-color: rgba(0,0,0,0.24);
+  border: 1px solid rgba(255,255,255,0.07);
+  padding: 8px 10px;
+}
+
+.spotlight-preview-text {
+  font-family: monospace;
+  font-size: 11px;
+  color: rgba(255,255,255,0.72);
+}
+
+.spotlight-preview-buttons {
+  margin-top: 16px;
+  spacing: 8px;
+}
+
+.spotlight-preview-button {
+  padding: 8px 10px;
+  border-radius: 9px;
+  background-color: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.88);
+}
+
+.spotlight-preview-button-primary {
+  background-gradient-direction: vertical;
+  background-gradient-start: #4a92ef;
+  background-gradient-end: #3584e4;
+  border-color: #5b9df2;
+  box-shadow: 0 4px 12px rgba(53,132,228,0.35);
+  color: #ffffff;
+}
+
+.spotlight-preview-button-disabled {
+  color: rgba(255,255,255,0.34);
+  background-color: rgba(255,255,255,0.035);
+}
+
+.spotlight-preview-button-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.spotlight-action-menu {
+  min-width: 210px;
+}
+
 .spotlight-empty {
   padding: 34px 20px 38px 20px;
+  spacing: 8px;
 }
 
 .spotlight-empty-icon {
@@ -148,6 +263,7 @@
   padding: 9px 18px;
   border-top: 1px solid rgba(255,255,255,0.09);
   background-color: rgba(0,0,0,0.18);
+  spacing: 16px;
 }
 
 .spotlight-footer-hints {

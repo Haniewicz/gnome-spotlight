@@ -49,6 +49,7 @@ export default class SpotlightExtension extends Extension {
     this._modal = new SpotlightModal(this._settings, {
       registry: this._registry,
       onResultActivated: result => this._recordUsage(result),
+      onResultPinned: result => this._pinResult(result),
     });
 
     this._providersChangedId = this._settings.connect(
@@ -163,6 +164,21 @@ export default class SpotlightExtension extends Extension {
       return;
 
     this._usageStore.record(String(key), Date.now());
+    this._scheduleUsageSave();
+  }
+
+  _pinResult(result) {
+    if (!this._usageStore || !result)
+      return;
+
+    const key = result.usageKey ??
+      (result.providerId && result.id !== undefined
+        ? `${result.providerId}:${result.id}`
+        : null);
+    if (!key)
+      return;
+
+    this._usageStore.togglePin(String(key));
     this._scheduleUsageSave();
   }
 
