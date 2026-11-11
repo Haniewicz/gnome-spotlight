@@ -37,6 +37,8 @@ Wariant z innym UUID (np. do testów obok zainstalowanej wersji):
 bash tools/deploy.sh --uuid-suffix test
 ```
 
+Dwie kopie (np. `spotlight@haniewicz.dev` i wariant z `--uuid-suffix`) mogą działać jednocześnie, bo nazwy GType są wyprowadzane per UUID.
+
 Po instalacji włącz rozszerzenie w aplikacji „Rozszerzenia” lub:
 
 ```bash

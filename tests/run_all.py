@@ -52,6 +52,7 @@ PURE_MODULES = [
     "lib/usage.js",
     "lib/calculator.js",
     "lib/format.js",
+    "lib/gtype.js",
     "lib/providers/registry.js",
 ]
 
@@ -66,6 +67,7 @@ REQUIRED_FILES = [
     "lib/usage.js",
     "lib/calculator.js",
     "lib/format.js",
+    "lib/gtype.js",
     "lib/providers/files.js",
     "lib/providers/calculator.js",
     "lib/ui/modal.js",

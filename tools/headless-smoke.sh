@@ -9,6 +9,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UUID="spotlight@haniewicz.dev"
+COEXIST_UUID="${UUID}-coexist"
 TIMEOUT="${SPOTLIGHT_SMOKE_TIMEOUT:-150}"
 
 skip() {
@@ -69,6 +70,30 @@ cp -R "$ROOT/lib" "$ROOT/schemas" "$DEST/"
 
 if ! glib-compile-schemas --strict "$DEST/schemas" >/dev/null 2>&1; then
   printf 'FAIL: nie można skompilować schematu w izolowanym katalogu rozszerzenia\n'
+  exit 1
+fi
+
+# Second copy under a different UUID, used by smoke.js to prove that both
+# extensions (and their per-UUID GTypes) can be ACTIVE at the same time.
+COEXIST_DEST="$XDG_DATA_HOME/gnome-shell/extensions/$COEXIST_UUID"
+if ! cp -R "$DEST" "$COEXIST_DEST"; then
+  printf 'FAIL: nie można skopiować rozszerzenia do katalogu współistnienia\n'
+  exit 1
+fi
+if ! python3 - "$COEXIST_DEST/metadata.json" "$COEXIST_UUID" <<'PY'
+import json
+import sys
+
+path, uuid = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as handle:
+    metadata = json.load(handle)
+metadata["uuid"] = uuid
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(metadata, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+PY
+then
+  printf 'FAIL: nie można ustawić UUID drugiej kopii rozszerzenia\n'
   exit 1
 fi
 

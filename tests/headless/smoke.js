@@ -5,6 +5,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { ExtensionState } from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 
 const UUID = 'spotlight@haniewicz.dev';
+const COEXIST_UUID = `${UUID}-coexist`;
 const MARKERS = ['modal-open', 'modal-typed', 'modal-esc', 'modal-closed', 'preview-text'];
 
 function sleep(milliseconds) {
@@ -27,8 +28,8 @@ async function waitFor(predicate, description, timeoutMs = 10000) {
   throw new Error(`timeout waiting for ${description}`);
 }
 
-function extensionState() {
-  return Main.extensionManager?.lookup(UUID) ?? null;
+function extensionState(uuid = UUID) {
+  return Main.extensionManager?.lookup(uuid) ?? null;
 }
 
 function assert(condition, step, message) {
@@ -47,8 +48,9 @@ function pressEscape(modal) {
 /**
  * Headless smoke script run by gnome-shell --automation-script.
  *
- * Sequence: enable -> keybinding handler -> modal visible -> type "spo" ->
- * entry has 3 chars -> Escape -> modal hidden -> disable.
+ * Sequence: enable primary -> enable second copy with another UUID -> both
+ * ACTIVE -> keybinding handler -> modal visible -> type "spo" -> entry has
+ * 3 chars -> Escape -> modal hidden -> disable both.
  */
 export async function run() {
   let step = 'enable';
@@ -63,6 +65,24 @@ export async function run() {
       `extension ${UUID} to become ACTIVE`
     );
     assert(extension.stateObj, step, 'extension has no state object');
+
+    step = 'coexist-enable';
+    Main.extensionManager.enableExtension(COEXIST_UUID);
+    const coexist = await waitFor(
+      () => {
+        const candidate = extensionState(COEXIST_UUID);
+        return candidate?.state === ExtensionState.ACTIVE ? candidate : null;
+      },
+      `extension ${COEXIST_UUID} to become ACTIVE`
+    );
+    assert(coexist.stateObj, step, 'second copy has no state object');
+    assert(coexist.stateObj._modal, step, 'second copy did not create its modal');
+    assert(
+      extension.state === ExtensionState.ACTIVE &&
+        coexist.state === ExtensionState.ACTIVE,
+      step,
+      'both extension copies are not ACTIVE simultaneously'
+    );
 
     step = 'modal-open';
     extension.stateObj._toggle();
@@ -134,13 +154,19 @@ export async function run() {
     assert(modal.visible === false, step, 'modal is still visible after Escape');
 
     step = 'modal-closed';
+    Main.extensionManager.disableExtension(COEXIST_UUID);
     Main.extensionManager.disableExtension(UUID);
     await waitFor(
       () => {
-        const candidate = extensionState();
-        return candidate && candidate.state !== ExtensionState.ACTIVE ? candidate : null;
+        const primary = extensionState(UUID);
+        const secondary = extensionState(COEXIST_UUID);
+        return primary && secondary &&
+          primary.state !== ExtensionState.ACTIVE &&
+          secondary.state !== ExtensionState.ACTIVE
+          ? { primary, secondary }
+          : null;
       },
-      `extension ${UUID} to leave ACTIVE`
+      'both extensions to leave ACTIVE'
     );
 
     print(`PASS: ${MARKERS.join(' ')}`);
