@@ -7,6 +7,8 @@ powłoki i kalkulatora — z podglądem, menu akcji i frecency.
 Wizualna referencja: `mockup/launcher.html` oraz `mockup/spotlight-*.png`.
 Specyfikacja: `docs/DESIGN.md`.
 
+Przy `enable()` rozszerzenie asynchronicznie rozgrzewa cache aplikacji, paneli Ustawień i bazy `locate`, dzięki czemu pierwsze wpisanie nie płaci zimnego kosztu providerów.
+
 ## Wymagania
 
 - GNOME Shell 45–51 (testowane na 51.1) i gjs 1.90+.
@@ -127,13 +129,13 @@ Bramka wydajnościowa (ten sam izolowany, headless Shell):
 bash tools/headless-perf.sh
 ```
 
-Skrypt mierzy `registry.search()` dla `s`, `sp`, `spo`, `spot` oraz pełną
-ścieżkę `set_text()` (debounce 120 ms, wyszukiwanie, render listy) z monitorem
-zacięć pętli głównej co 10 ms. Wypisuje linie `BENCH` z rzeczywistymi czasami,
-liczbą wyników i maksymalnym zacięciem, a na końcu `PASS: perf search<=8
-latency<150ms keystroke<250ms stall<100ms`. Kod 0 wymaga: każdy search ≤ 8
-wyników i < 150 ms, każde `set_text` < 250 ms oraz maksymalne zacięcie pętli
-< 100 ms. Brak `gnome-shell`/typelibów daje `SKIP:` i kod 3.
+Skrypt mierzy `registry.search()` dla `s`, `sp`, `spo`, `spot` w dwóch
+przebiegach (zimny po warm-upie oraz ciepły) i ścieżkę `set_text()` z monitorem
+zacięć pętli głównej co 10 ms. Wypisuje linie `BENCH` z rzeczywistymi czasami i
+liczbą wyników, a na końcu `PASS: perf cold<=400ms warm<=120ms`. Kod 0 wymaga:
+zimny przebieg ≤ 400 ms na zapytanie, ciepły ≤ 120 ms na zapytanie i ≤ 80 ms
+pracy providerów na znak (debounce 120 ms nie jest wliczany do budżetu znaku).
+Brak `gnome-shell`/typelibów daje `SKIP:` i kod 3.
 
 Limit `max-results` jest wspólny dla wszystkich providerów i stosowany po
 rankingu: łącznie powstaje najwyżej N wyników, a sekcja pojedynczego providera

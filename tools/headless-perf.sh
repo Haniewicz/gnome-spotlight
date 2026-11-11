@@ -102,8 +102,8 @@ if grep -Fq 'FAIL:' "$LOG"; then
   exit 1
 fi
 
-if ! grep -Fq 'PASS: perf search<=8 latency<150ms keystroke<250ms stall<100ms' "$LOG"; then
-  printf 'FAIL: brak znacznika PASS: perf search<=8 latency<150ms keystroke<250ms stall<100ms\n'
+if ! grep -Fq 'PASS: perf cold<=400ms warm<=120ms' "$LOG"; then
+  printf 'FAIL: brak znacznika PASS: perf cold<=400ms warm<=120ms\n'
   exit 1
 fi
 

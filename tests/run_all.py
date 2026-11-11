@@ -46,6 +46,7 @@ EXPECTED_DEFAULTS = {
 
 # These modules are PURE by DESIGN §3: they must never import the shell or GI.
 PURE_MODULES = [
+    "lib/cache.js",
     "lib/text.js",
     "lib/fuzzy.js",
     "lib/ranking.js",

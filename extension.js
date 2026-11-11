@@ -37,6 +37,8 @@ export default class SpotlightExtension extends Extension {
     this._maxResultsChangedId = 0;
     this._maxResults = 8;
     this._enabled = false;
+    this._warmupIds = [];
+    this._warmupStarted = false;
   }
 
   enable() {
@@ -81,6 +83,60 @@ export default class SpotlightExtension extends Extension {
     );
 
     this._enabled = true;
+    this._scheduleWarmup();
+  }
+
+  _scheduleWarmup() {
+    if (this._warmupStarted || !this._registry)
+      return;
+
+    this._warmupStarted = true;
+    const providers = this._registry.list()
+      .filter(provider => typeof provider.warmUp === 'function');
+
+    // One idle source per provider keeps each warm-up step from running back
+    // to back in enable(): the shell gets a chance to paint between them.
+    for (const provider of providers) {
+      let sourceId = 0;
+      sourceId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        this._warmupIds = this._warmupIds.filter(id => id !== sourceId);
+        if (!this._enabled)
+          return GLib.SOURCE_REMOVE;
+
+        try {
+          provider.warmUp();
+        } catch (error) {
+          logError(error);
+        }
+        return GLib.SOURCE_REMOVE;
+      });
+
+      if (sourceId)
+        this._warmupIds.push(sourceId);
+    }
+  }
+
+  _cancelWarmup() {
+    for (const id of this._warmupIds) {
+      try {
+        GLib.source_remove(id);
+      } catch {
+        // The source may already have fired.
+      }
+    }
+    this._warmupIds = [];
+    this._warmupStarted = false;
+  }
+
+  _disposeProvider(provider) {
+    if (!provider || typeof provider.dispose !== 'function')
+      return;
+
+    try {
+      provider.dispose();
+    } catch (error) {
+      logError(error);
+    }
   }
 
   _syncProviders() {
@@ -97,8 +153,10 @@ export default class SpotlightExtension extends Extension {
 
     const wanted = new Set(Array.isArray(enabled) ? enabled : []);
     for (const provider of this._registry.list()) {
-      if (!wanted.has(provider.id))
-        this._registry.unregister(provider.id);
+      if (wanted.has(provider.id))
+        continue;
+      this._disposeProvider(provider);
+      this._registry.unregister(provider.id);
     }
 
     for (const id of wanted) {
@@ -243,6 +301,7 @@ export default class SpotlightExtension extends Extension {
 
   disable() {
     this._enabled = false;
+    this._cancelWarmup();
 
     if (this._providersChangedId && this._settings) {
       try {
@@ -283,7 +342,12 @@ export default class SpotlightExtension extends Extension {
       this._modal = null;
     }
 
-    this._registry = null;
+    if (this._registry) {
+      for (const provider of this._registry.list())
+        this._disposeProvider(provider);
+      this._registry = null;
+    }
+
     this._usageStore = null;
     this._settings = null;
     this._maxResults = 8;
