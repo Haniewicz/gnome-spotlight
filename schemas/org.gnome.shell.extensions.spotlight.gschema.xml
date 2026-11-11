@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.spotlight"
+          path="/org/gnome/shell/extensions/spotlight/">
+
+    <key name="toggle-keybinding" type="as">
+      <default>['&lt;Super&gt;space']</default>
+      <summary>Keyboard shortcut that opens the launcher</summary>
+      <description>An array of accelerator strings; the first one opens the Spotlight modal.</description>
+    </key>
+
+    <key name="enabled-providers" type="as">
+      <default>['apps','windows','files','settings','commands','calculator']</default>
+      <summary>Enabled search providers</summary>
+      <description>Provider identifiers that participate in a search.</description>
+    </key>
+
+    <key name="max-results" type="i">
+      <default>8</default>
+      <summary>Maximum number of results</summary>
+      <description>Upper bound on the number of results returned for a single query.</description>
+    </key>
+
+    <key name="preview-enabled" type="b">
+      <default>true</default>
+      <summary>Show the preview pane</summary>
+      <description>Whether the result preview column is rendered.</description>
+    </key>
+
+    <key name="usage-history" type="s">
+      <default>'{}'</default>
+      <summary>Usage history</summary>
+      <description>JSON map of "&lt;providerId&gt;:&lt;id&gt;" to {"count": n, "lastUsed": epoch-ms}.</description>
+    </key>
+
+    <key name="currency-rates" type="s">
+      <default>'{}'</default>
+      <summary>Cached currency rates</summary>
+      <description>JSON object with base, rates and asOf fields.</description>
+    </key>
+
+    <key name="open-on-monitor" type="s">
+      <default>'pointer'</default>
+      <summary>Monitor used by the launcher</summary>
+      <description>One of pointer, focused or primary.</description>
+    </key>
+
+  </schema>
+</schemalist>

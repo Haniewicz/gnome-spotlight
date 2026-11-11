@@ -1,0 +1,8 @@
+{
+  "name": "Spotlight",
+  "description": "A Spotlight-style launcher for GNOME Shell: apps, windows, files, settings, commands and a calculator.",
+  "uuid": "spotlight@haniewicz.dev",
+  "settings-schema": "org.gnome.shell.extensions.spotlight",
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51"],
+  "version": 1
+}
