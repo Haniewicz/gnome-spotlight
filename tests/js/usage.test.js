@@ -2,6 +2,7 @@ import {
   test, run, assert, assertEqual, assertDeepEqual, assertNotEqual,
 } from './harness.js';
 import { UsageStore } from '../../lib/usage.js';
+import { rankResults } from '../../lib/ranking.js';
 
 test('parse("") returns an empty state without throwing', () => {
   const store = UsageStore.parse('');
@@ -126,6 +127,27 @@ test('static parse result has the UsageStore API', () => {
   assert(typeof store.record === 'function');
   assert(typeof store.entry === 'function');
   assert(typeof store.serialize === 'function');
+});
+
+test('frecency boost changes the order of equally matching results', () => {
+  const first = { id: 'first', providerId: 'apps', title: 'Spotify' };
+  const used = { id: 'used', providerId: 'apps', title: 'Spotify' };
+
+  const ranked = rankResults('spotify', [first, used], {
+    'apps:used': { count: 3, lastUsed: 0 },
+  });
+
+  assertEqual(ranked[0].id, 'used');
+  assertEqual(ranked[1].id, 'first');
+});
+
+test('a UsageStore instance feeds rankResults directly', () => {
+  const first = { id: 'first', providerId: 'files', title: 'raport.pdf' };
+  const used = { id: 'used', providerId: 'files', title: 'raport.pdf' };
+  const store = UsageStore.parse('{"files:used":{"count":3,"lastUsed":0}}');
+
+  const ranked = rankResults('raport', [first, used], store);
+  assertEqual(ranked[0].id, 'used');
 });
 
 run('usage.test.js');

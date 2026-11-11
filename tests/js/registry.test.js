@@ -314,6 +314,31 @@ test('registering the same id replaces instead of duplicating', async () => {
   assertEqual(results[0].id, 'new');
 });
 
+test('usageMap boosts identical matches inside one priority', async () => {
+  const registry = new ProviderRegistry();
+  registry.register(makeProvider('apps', ProviderPriority.NORMAL, [
+    makeResult('apps', 'a', 'Spotify Alfa'),
+    makeResult('apps', 'b', 'Spotify Beta'),
+  ]));
+  registry.setUsageMap({ 'apps:b': { count: 3, lastUsed: 0 } });
+
+  const { results } = await registry.search('spotify');
+  assertDeepEqual(results.map(result => result.id), ['b', 'a']);
+});
+
+test('usageMap can be supplied per search call', async () => {
+  const registry = new ProviderRegistry();
+  registry.register(makeProvider('apps', ProviderPriority.NORMAL, [
+    makeResult('apps', 'a', 'Spotify Alfa'),
+    makeResult('apps', 'b', 'Spotify Beta'),
+  ]));
+
+  const { results } = await registry.search('spotify', {
+    'apps:b': { count: 3, lastUsed: 0 },
+  });
+  assertDeepEqual(results.map(result => result.id), ['b', 'a']);
+});
+
 for (const entry of cases) {
   try {
     await entry.fn();
