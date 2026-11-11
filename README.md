@@ -119,6 +119,25 @@ się kodem 0. Gdy w środowisku brakuje `gnome-shell` albo nie da się ustawić
 `GI_TYPELIB_PATH`, wypisuje `SKIP: <powód>` i kończy się kodem 3. Inne błędy
 Shella oznaczają kod ≠ 0.
 
+Bramka wydajnościowa (ten sam izolowany, headless Shell):
+
+```bash
+bash tools/headless-perf.sh
+```
+
+Skrypt mierzy `registry.search()` dla `s`, `sp`, `spo`, `spot` oraz pełną
+ścieżkę `set_text()` (debounce 120 ms, wyszukiwanie, render listy) z monitorem
+zacięć pętli głównej co 10 ms. Wypisuje linie `BENCH` z rzeczywistymi czasami,
+liczbą wyników i maksymalnym zacięciem, a na końcu `PASS: perf search<=8
+latency<150ms keystroke<250ms stall<100ms`. Kod 0 wymaga: każdy search ≤ 8
+wyników i < 150 ms, każde `set_text` < 250 ms oraz maksymalne zacięcie pętli
+< 100 ms. Brak `gnome-shell`/typelibów daje `SKIP:` i kod 3.
+
+Limit `max-results` jest wspólny dla wszystkich providerów i stosowany po
+rankingu: łącznie powstaje najwyżej N wyników, a sekcja pojedynczego providera
+nie przekracza `perProviderLimit` (domyślnie N). Dzięki temu wpisanie jednego
+znaku nie tworzy setek wierszy St.
+
 ## Struktura
 
 ```
@@ -132,7 +151,9 @@ lib/providers/          # aplikacje, okna, ustawienia, komendy, pliki, kalkulato
 lib/ui/                 # modal, wiersz wyniku, podgląd, menu akcji
 tools/deploy.sh
 tools/headless-smoke.sh
+tools/headless-perf.sh
 tests/run_all.py
 tests/js/               # testy PURE (gjs -m)
 tests/headless/smoke.js # skrypt automatyzacji Shella
+tests/headless/perf.js  # pomiary search/set_text w headless Shellu
 ```

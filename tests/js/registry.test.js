@@ -339,6 +339,99 @@ test('usageMap can be supplied per search call', async () => {
   assertDeepEqual(results.map(result => result.id), ['b', 'a']);
 });
 
+test('limit caps the total number of results', async () => {
+  const registry = new ProviderRegistry();
+  const results = Array.from({ length: 12 }, (_, index) =>
+    makeResult('many', `r${index}`, `Spot ${index}`)
+  );
+  registry.register(makeProvider('many', ProviderPriority.NORMAL, results));
+
+  const response = await registry.search('spot', { limit: 5 });
+
+  assertEqual(response.results.length, 5);
+  assertEqual(response.totalMatched, 12);
+  assertTrue(response.truncated);
+});
+
+test('perProviderLimit caps each provider section', async () => {
+  const registry = new ProviderRegistry();
+  registry.register(makeProvider('alpha', ProviderPriority.NORMAL, [
+    makeResult('alpha', 'a1', 'Spot alfa 1'),
+    makeResult('alpha', 'a2', 'Spot alfa 2'),
+    makeResult('alpha', 'a3', 'Spot alfa 3'),
+    makeResult('alpha', 'a4', 'Spot alfa 4'),
+  ]));
+  registry.register(makeProvider('beta', ProviderPriority.NORMAL, [
+    makeResult('beta', 'b1', 'Spot beta 1'),
+    makeResult('beta', 'b2', 'Spot beta 2'),
+    makeResult('beta', 'b3', 'Spot beta 3'),
+    makeResult('beta', 'b4', 'Spot beta 4'),
+  ]));
+
+  const response = await registry.search('spot', {
+    limit: 20,
+    perProviderLimit: 2,
+  });
+
+  const counts = new Map();
+  for (const result of response.results)
+    counts.set(result.providerId, (counts.get(result.providerId) ?? 0) + 1);
+
+  assertEqual(response.results.length, 4);
+  assertEqual(counts.get('alpha'), 2);
+  assertEqual(counts.get('beta'), 2);
+  assertEqual(response.totalMatched, 8);
+  assertTrue(response.truncated);
+});
+
+test('truncation happens after ranking and keeps the best matches', async () => {
+  const registry = new ProviderRegistry();
+  registry.register(makeProvider('ranked', ProviderPriority.NORMAL, [
+    makeResult('ranked', 'contains', 'xspotx'),
+    makeResult('ranked', 'word', 'x spot'),
+    makeResult('ranked', 'prefix', 'spotify'),
+    makeResult('ranked', 'exact', 'spot'),
+  ]));
+
+  const response = await registry.search('spot', { limit: 2 });
+
+  assertDeepEqual(
+    response.results.map(result => result.id),
+    ['exact', 'prefix']
+  );
+  assertEqual(response.totalMatched, 4);
+  assertTrue(response.truncated);
+});
+
+test('totalMatched and truncated describe an untrimmed result set', async () => {
+  const registry = new ProviderRegistry();
+  registry.register(makeProvider('small', ProviderPriority.NORMAL, [
+    makeResult('small', '1', 'Spot one'),
+    makeResult('small', '2', 'Spot two'),
+    makeResult('small', '3', 'Spot three'),
+  ]));
+
+  const response = await registry.search('spot', { limit: 8 });
+
+  assertEqual(response.results.length, 3);
+  assertEqual(response.totalMatched, 3);
+  assertFalse(response.truncated);
+});
+
+test('search without an explicit limit defaults to 8 results', async () => {
+  const registry = new ProviderRegistry();
+  const results = Array.from({ length: 10 }, (_, index) =>
+    makeResult('default', `d${index}`, `Spot default ${index}`)
+  );
+  registry.register(makeProvider('default', ProviderPriority.NORMAL, results));
+
+  const response = await registry.search('spot');
+
+  assertEqual(response.results.length, 8);
+  assertEqual(response.totalMatched, 10);
+  assertTrue(response.truncated);
+});
+
 for (const entry of cases) {
   try {
     await entry.fn();

@@ -34,6 +34,8 @@ export default class SpotlightExtension extends Extension {
     this._usageStore = null;
     this._usageSaveId = 0;
     this._providersChangedId = 0;
+    this._maxResultsChangedId = 0;
+    this._maxResults = 8;
     this._enabled = false;
   }
 
@@ -42,12 +44,14 @@ export default class SpotlightExtension extends Extension {
       return;
 
     this._settings = this.getSettings();
+    this._maxResults = this._readMaxResults();
     this._usageStore = this._loadUsageStore();
     this._registry = new ProviderRegistry(this._usageStore);
     this._syncProviders();
 
     this._modal = new SpotlightModal(this._settings, {
       registry: this._registry,
+      limit: this._maxResults,
       onResultActivated: result => this._recordUsage(result),
       onResultPinned: result => this._pinResult(result),
     });
@@ -55,6 +59,17 @@ export default class SpotlightExtension extends Extension {
     this._providersChangedId = this._settings.connect(
       'changed::enabled-providers',
       () => this._syncProviders()
+    );
+
+    // max-results is cached here and forwarded to every search; it is read
+    // again only when the setting actually changes, never per keystroke.
+    this._maxResultsChangedId = this._settings.connect(
+      'changed::max-results',
+      () => {
+        this._maxResults = this._readMaxResults();
+        if (this._modal?._options)
+          this._modal._options.limit = this._maxResults;
+      }
     );
 
     Main.wm.addKeybinding(
@@ -108,20 +123,18 @@ export default class SpotlightExtension extends Extension {
       };
     }
 
-    if (id === 'files') {
-      return {
-        getLimit: () => {
-          try {
-            const value = this._settings?.get_int('max-results');
-            return Number.isFinite(value) && value > 0 ? value : undefined;
-          } catch {
-            return undefined;
-          }
-        },
-      };
-    }
-
     return {};
+  }
+
+  _readMaxResults() {
+    try {
+      const value = this._settings?.get_int('max-results');
+      if (Number.isFinite(value) && value > 0)
+        return Math.floor(value);
+    } catch {
+      // Fall through to the schema default below.
+    }
+    return 8;
   }
 
   _readCurrencyRates() {
@@ -240,6 +253,15 @@ export default class SpotlightExtension extends Extension {
       this._providersChangedId = 0;
     }
 
+    if (this._maxResultsChangedId && this._settings) {
+      try {
+        this._settings.disconnect(this._maxResultsChangedId);
+      } catch (error) {
+        logError(error);
+      }
+      this._maxResultsChangedId = 0;
+    }
+
     // Flush memory-only usage counters before the settings object goes away.
     this._cancelUsageSave();
     this._flushUsage();
@@ -264,5 +286,6 @@ export default class SpotlightExtension extends Extension {
     this._registry = null;
     this._usageStore = null;
     this._settings = null;
+    this._maxResults = 8;
   }
 }
