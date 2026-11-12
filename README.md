@@ -71,7 +71,7 @@ nie nadpisuje cudzych skrótów.
 | `Tab` / `Shift+Tab` | następna / poprzednia sekcja |
 | `Enter` | akcja domyślna |
 | `Ctrl+Enter` | akcja alternatywna (np. kopiuj ścieżkę) |
-| `Space` | podgląd tekstu pliku (do 200 linii) |
+| `Space` | Quick Look: podgląd obrazu/PDF/tekstu (ponownie `Space` wraca do listy) |
 | `Ctrl+K` | menu akcji zaznaczonego wyniku |
 | `Ctrl+P` | przypnij/odepnij od „Częste” (flaga w historii użycia) |
 | `Esc` | zamknij modal |
@@ -97,7 +97,10 @@ wyników (suwak 4–12), przełącznik panelu podglądu oraz monitor otwierania
   (poza MVP).
 - Komendy wymagają terminala; bez niego wynik jest widoczny, ale wyszarzony.
 - Panel podglądu pokazuje maksymalnie 6 wierszy metadanych; podgląd tekstu
-  pliku jest ograniczony do 200 linii i nie jest edytorem.
+  pliku jest ograniczony do 200 linii i nie jest edytorem. Obrazy i pierwsze
+  strony PDF są miniaturkowane asynchronicznie (GnomeDesktop, z fallbackiem
+  `GdkPixbuf` dla obrazów do 20 MB); bez thumbnailera PDF pokazuje
+  „brak podglądu PDF”.
 
 ## Testy
 
@@ -118,7 +121,7 @@ rozszerzenie skopiowane do tymczasowego `XDG_DATA_HOME`):
 bash tools/headless-smoke.sh
 ```
 
-Skrypt wypisuje `PASS: modal-open modal-typed modal-esc modal-closed preview-text` i kończy
+Skrypt wypisuje `PASS: modal-open modal-typed modal-esc modal-closed preview-text preview-image` i kończy
 się kodem 0. Gdy w środowisku brakuje `gnome-shell` albo nie da się ustawić
 `GI_TYPELIB_PATH`, wypisuje `SKIP: <powód>` i kończy się kodem 3. Inne błędy
 Shella oznaczają kod ≠ 0.
@@ -201,6 +204,7 @@ stylesheet.css
 schemas/                # GSettings
 lib/                    # PURE: ranking, fuzzy, text, calculator, format, usage,
                         #       searchStream (merge/stabilize/LRU)
+lib/preview-model.js    # PURE: klasyfikacja pliku, metadane, snippet tekstu
 lib/daemonClient.js     # Gio.DBus: probe, Search, NameOwnerChanged, cancel
 lib/providers/          # aplikacje, okna, ustawienia, komendy, pliki, kalkulator
 lib/ui/                 # modal, wiersz wyniku, podgląd, menu akcji

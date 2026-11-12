@@ -6,7 +6,30 @@ import { ExtensionState } from 'resource:///org/gnome/shell/misc/extensionUtils.
 
 const UUID = 'spotlight@haniewicz.dev';
 const COEXIST_UUID = `${UUID}-coexist`;
-const MARKERS = ['modal-open', 'modal-typed', 'modal-esc', 'modal-closed', 'preview-text'];
+const MARKERS = [
+  'modal-open',
+  'modal-typed',
+  'modal-esc',
+  'modal-closed',
+  'preview-text',
+  'preview-image',
+];
+
+// 3x2 PNG (red/green top row, blue/white bottom row). Keeping the bytes in
+// the script avoids a binary fixture and makes the image preview smoke
+// independent of the session's icon theme or file index.
+const SMOKE_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAYAAACddGYaAAAAFElEQVR4nGP4z8DwHwwZ/kNIGAcAlYQL9edHRsgAAAAASUVORK5CYII=';
+
+function writeSmokePng() {
+  const cacheDir = GLib.get_user_cache_dir();
+  GLib.mkdir_with_parents(cacheDir, 0o755);
+  const path = GLib.build_filenamev([cacheDir, 'spotlight-smoke.png']);
+  const bytes = GLib.base64_decode(SMOKE_PNG_BASE64);
+  if (!GLib.file_set_contents(path, bytes))
+    throw new Error(`cannot write smoke PNG to ${path}`);
+  return path;
+}
 
 function sleep(milliseconds) {
   return new Promise(resolve => {
@@ -147,7 +170,68 @@ export async function run() {
     assert(preview.height > 0, step, `preview panel height is ${preview.height}`);
     assert(preview._textScroll.height > 0, step, 'text preview has zero height');
 
+    // Space again returns to the metadata/list view instead of closing the
+    // modal; this is the Quick Look toggle contract.
+    const closeTextEvent = modal._onCapturedEvent(modal, {
+      type: () => Clutter.EventType.KEY_PRESS,
+      get_key_symbol: () => Clutter.KEY_space,
+      get_state: () => 0,
+    });
+    assert(closeTextEvent === Clutter.EVENT_STOP, step, 'Space did not close the text preview');
+    assert(preview.isPreviewOpen() === false, step, 'text preview is still marked open');
+    assert(preview._textScroll.visible === false, step, 'text preview is still visible');
+
+    step = 'preview-image';
+    const imagePath = writeSmokePng();
+    const imageResult = {
+      id: imagePath,
+      providerId: 'files',
+      title: 'spotlight-smoke.png',
+      subtitle: imagePath,
+      kind: 'png',
+      icon: 'image-x-generic-symbolic',
+      actions: { primary: () => {} },
+      preview: {
+        path: imagePath,
+        rows: [
+          ['Ścieżka', imagePath],
+          ['Typ', 'png'],
+        ],
+        description: imagePath,
+      },
+    };
+    modal.setResults([{ id: 'files', title: 'Pliki', results: [imageResult] }]);
+    assert(modal._rows.length === 1, step, 'image result was not added');
+    assert(modal._selectedResult() === imageResult, step, 'image result is not selected');
+
+    const imageEvent = modal._onCapturedEvent(modal, {
+      type: () => Clutter.EventType.KEY_PRESS,
+      get_key_symbol: () => Clutter.KEY_space,
+      get_state: () => 0,
+    });
+    assert(imageEvent === Clutter.EVENT_STOP, step, 'Space did not open the image preview');
+
+    await waitFor(
+      () => {
+        const child = preview._imageBox.get_child();
+        return preview._imageBox.visible &&
+          child &&
+          typeof child.get_preferred_height === 'function' &&
+          child.get_preferred_height(-1)[1] > 0;
+      },
+      'image preview to expose a non-empty image child'
+    );
+    const imageChild = preview._imageBox.get_child();
+    assert(imageChild.get_preferred_height(-1)[1] > 0, step, 'image child has zero height');
+    assert(preview._textScroll.visible === false, step, 'text box is visible over the image');
+
     step = 'modal-esc';
+    const previewEscape = pressEscape(modal);
+    assert(previewEscape === Clutter.EVENT_STOP, step, 'Escape was not consumed by the preview');
+    assert(modal.isOpen === true, step, 'the first Escape closed the modal instead of the preview');
+    assert(preview.isPreviewOpen() === false, step, 'image preview is still open after Escape');
+    assert(preview._imageBox.visible === false, step, 'image preview is still visible after Escape');
+
     const result = pressEscape(modal);
     assert(result === Clutter.EVENT_STOP, step, 'Escape was not consumed by the modal');
     assert(modal.isOpen === false, step, 'modal is still open after Escape');
@@ -169,6 +253,9 @@ export async function run() {
       'both extensions to leave ACTIVE'
     );
 
+    // Keep the five-marker line for older local smoke wrappers; the canonical
+    // six-marker contract (including preview-image) is printed last.
+    print('PASS: modal-open modal-typed modal-esc modal-closed preview-text');
     print(`PASS: ${MARKERS.join(' ')}`);
   } catch (error) {
     print(`FAIL: ${step}: ${error.message}`);
