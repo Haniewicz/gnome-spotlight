@@ -69,6 +69,7 @@ PURE_MODULES = [
     "lib/gtype.js",
     "lib/files-parse.js",
     "lib/preview-model.js",
+    "lib/window-actions.js",
     "lib/providers/registry.js",
     "lib/clipboard-store.js",
     "lib/searchStream.js",
@@ -94,6 +95,7 @@ REQUIRED_FILES = [
     "lib/gtype.js",
     "lib/files-parse.js",
     "lib/preview-model.js",
+    "lib/window-actions.js",
     "lib/providers/files.js",
     "lib/providers/calculator.js",
     "lib/providers/clipboard.js",
@@ -124,6 +126,7 @@ REQUIRED_FILES = [
     "tests/headless/perf.js",
     "tests/js/files-parse.test.js",
     "tests/js/preview-model.test.js",
+    "tests/js/window-actions.test.js",
     "tests/js/clipboard-store.test.js",
     "tests/run_all.py",
 ]

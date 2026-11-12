@@ -5,9 +5,12 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { ExtensionState } from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 
+import { planTile } from '../../lib/window-actions.js';
+
 const UUID = 'spotlight@haniewicz.dev';
 const COEXIST_UUID = `${UUID}-coexist`;
 const MARKERS = [
+  'window-actions',
   'modal-open',
   'modal-typed',
   'modal-esc',
@@ -78,8 +81,27 @@ function pressEscape(modal) {
  * 3 chars -> Escape -> modal hidden -> disable both.
  */
 export async function run() {
-  let step = 'enable';
+  let step = 'window-actions';
   try {
+    // Meta.Window cannot be constructed from an automation script, so the
+    // window-actions marker exercises the pure planner in the Shell context.
+    const workArea = { x: 0, y: 0, width: 1921, height: 1080 };
+    const left = planTile(workArea, 'left');
+    const right = planTile(workArea, 'right');
+    assert(left.width === 960, step, `left width is ${left.width}, expected 960`);
+    assert(right.x === 960, step, `right x is ${right.x}, expected 960`);
+    assert(right.width === 961, step,
+      `right width is ${right.width}, expected 961`);
+    assert(left.x + left.width === right.x, step,
+      'right tile does not start where the left tile ends');
+    assert(left.width + right.width === 1921, step,
+      `widths sum to ${left.width + right.width}, expected 1921`);
+    assert(left.x === 0 && left.y === 0 && left.height === 1080, step,
+      'left tile does not cover the full work-area height');
+    assert(right.y === 0 && right.height === 1080, step,
+      'right tile does not cover the full work-area height');
+
+    step = 'enable';
     Main.extensionManager.enableExtension(UUID);
     step = 'enable';
     const extension = await waitFor(
@@ -286,7 +308,8 @@ export async function run() {
     );
 
     // Keep the five-marker line for older local smoke wrappers; the canonical
-    // six-marker contract (including preview-image) is printed last.
+    // marker contract (including window-actions and preview-image) is printed
+    // last.
     print('PASS: modal-open modal-typed modal-esc modal-closed preview-text');
     print(`PASS: ${MARKERS.join(' ')}`);
   } catch (error) {

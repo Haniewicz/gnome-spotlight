@@ -84,6 +84,29 @@ Menu akcji zawiera tylko akcje możliwe do wykonania; np. „Uruchom w terminalu
 jest wyszarzone, gdy nie ma zainstalowanego terminala. Zamknięcie menu nie
 zamyka modala.
 
+### Akcje okien
+
+Na wynikach providera `windows` (okno aplikacji z listy otwartych okien) menu
+`Ctrl+K` zawiera akcje geometrii i zarządzania oknem. Wpisy są wyszarzone, gdy
+okno nie zgłasza odpowiedniej możliwości (`can_close`, `can_minimize`,
+`allows_move`, `allows_resize`, `can_maximize`), więc niedostępna akcja nigdy
+nie wykonuje się w tle.
+
+| `id` | Akcja | Warunek aktywności | Wykonanie |
+|---|---|---|---|
+| `tile-left` | Przytnij w lewo | okno można przesuwać i zmieniać rozmiar | `Meta.Window.tile(Meta.TileMode.LEFT)`, a bez tiling-u `planTile()` + `move_resize_frame()` |
+| `tile-right` | Przytnij w prawo | jak wyżej | `Meta.Window.tile(Meta.TileMode.RIGHT)`, a bez tiling-u `planTile()` + `move_resize_frame()` |
+| `maximize` | Maksymalizuj | `can_maximize`, okno można przesuwać i zmieniać rozmiar | `Meta.Window.maximize()`, a bez tej metody `planCenter()` (90% pracy) + `move_resize_frame()` |
+| `move-workspace-1` … `move-workspace-4` | Przenieś na przestrzeń 1–4 | `allows_move` i istnieje dana przestrzeń | `change_workspace()` + `activate()` |
+| `minimize` | Minimalizuj | `can_minimize` | `Meta.Window.minimize()` |
+| `close` | Zamknij | `can_close` | `Meta.Window.close()`, a w starszym Mutterze `delete()` |
+
+Planista `lib/window-actions.js` jest czystym modułem (bez `Meta`/`St`), więc
+dzieli się na pół ekranu bez 1-px szczeliny również na monitorach o nieparzystej
+szerokości i z ujemnym początkiem. Współpracuje z `splittiling@haniewicz.dev`:
+gdy Mutter udostępnia `tile()`, to on rozstrzyga geometrię, a planista jest tylko
+fallbackiem, więc rozszerzenia nie muszą być włączane razem.
+
 ## Preferencje
 
 Okno Adwaita pozwala ustawić skrót, włączać/wyłączać providery, wybrać limit
@@ -166,8 +189,10 @@ rozszerzenie skopiowane do tymczasowego `XDG_DATA_HOME`):
 bash tools/headless-smoke.sh
 ```
 
-Skrypt wypisuje `PASS: modal-open modal-typed modal-esc modal-closed preview-text preview-image clipboard-item` i kończy
-się kodem 0. Gdy w środowisku brakuje `gnome-shell` albo nie da się ustawić
+Skrypt wypisuje `PASS: window-actions modal-open modal-typed modal-esc
+modal-closed preview-text preview-image clipboard-item` i kończy się kodem 0
+(zachowana jest też starsza linia bez `window-actions` dla dotychczasowych
+wrapperów). Gdy w środowisku brakuje `gnome-shell` albo nie da się ustawić
 `GI_TYPELIB_PATH`, wypisuje `SKIP: <powód>` i kończy się kodem 3. Inne błędy
 Shella oznaczają kod ≠ 0.
 
