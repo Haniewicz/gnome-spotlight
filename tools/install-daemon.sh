@@ -75,7 +75,8 @@ EOF
 systemd_ok=0
 if command -v systemctl >/dev/null 2>&1 &&
    systemctl --user daemon-reload >/dev/null 2>&1; then
-  if systemctl --user enable --now "$UNIT_NAME" >/dev/null 2>&1; then
+  if systemctl --user enable "$UNIT_NAME" >/dev/null 2>&1 &&
+     systemctl --user restart "$UNIT_NAME" >/dev/null 2>&1; then
     systemd_ok=1
   fi
 fi
