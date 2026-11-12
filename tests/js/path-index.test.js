@@ -44,6 +44,39 @@ test('basename prefix beats basename contains', () => {
   assertEqual(results[1].score, 2);
 });
 
+test('a whole-name prefix beats a longer basename with the same score', () => {
+  const index = new PathIndex();
+  const reference = `${HOME}/Projects/nova-notes-app/docs/design-reference.png`;
+  const design = `${HOME}/Projects/Gnome-Spotlight/docs/DESIGN.md`;
+
+  // Both score 3 (basename prefix); insertion order must not decide the tie.
+  index.add(reference);
+  index.add(design);
+
+  const results = index.search('DESIGN');
+  assertEqual(results[0].path, design);
+  assertEqual(results[0].name, 'DESIGN.md');
+  assertEqual(results[0].score, 3);
+  assertEqual(results[1].path, reference);
+  assertEqual(results[1].score, 3);
+});
+
+test('an exact basename wins when the query includes the extension', () => {
+  const index = new PathIndex();
+  const reference = `${HOME}/Projects/nova-notes-app/docs/design-reference.png`;
+  const backup = `${HOME}/Projects/Gnome-Spotlight/docs/design.md.bak`;
+  const design = `${HOME}/Projects/Gnome-Spotlight/docs/DESIGN.md`;
+
+  index.add(reference);
+  index.add(backup);
+  index.add(design);
+
+  const results = index.search('design.md');
+  assertEqual(results[0].path, design);
+  assertEqual(results[0].name, 'DESIGN.md');
+  assertEqual(results[1].path, backup);
+});
+
 test('basename contains beats a directory-segment match', () => {
   const index = new PathIndex();
   index.add(`${HOME}/Projects/design/readme.txt`);

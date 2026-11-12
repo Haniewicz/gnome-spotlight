@@ -4,6 +4,7 @@
 // calls, per-provider timeout, dedupe, ranking, limits) with search modes and
 // the statistics object exposed over D-Bus.
 import { scoreResult } from '../lib/ranking.js';
+import { fold } from '../lib/text.js';
 import {
   ProviderPriority,
   ProviderRegistry,
@@ -79,6 +80,46 @@ function normalizeLimit(value, fallback) {
   if (!Number.isFinite(number))
     return fallback;
   return Math.max(0, Math.floor(number));
+}
+
+// The shared provider registry re-ranks rows by title collation, which would
+// put "design-reference.png" before "DESIGN.md". The files provider already
+// applies the path tie-break; keep that order for the files mode until the
+// daemon replaces the score for display.
+function compareFileResults(a, b, query) {
+  const scoreA = Number.isFinite(Number(a?.score)) ? Number(a.score) : 0;
+  const scoreB = Number.isFinite(Number(b?.score)) ? Number(b.score) : 0;
+  if (scoreB !== scoreA)
+    return scoreB - scoreA;
+
+  const needle = fold(query).trim();
+  const singleTerm = needle !== '' && !needle.includes(' ') ? needle : '';
+  const nameA = fold(String(a?.title ?? a?.name ?? ''));
+  const nameB = fold(String(b?.title ?? b?.name ?? ''));
+  const exactA = singleTerm !== '' && nameA === singleTerm ? 1 : 0;
+  const exactB = singleTerm !== '' && nameB === singleTerm ? 1 : 0;
+  if (exactB !== exactA)
+    return exactB - exactA;
+
+  const prefixA = singleTerm !== '' &&
+    nameA.startsWith(`${singleTerm}.`) ? 1 : 0;
+  const prefixB = singleTerm !== '' &&
+    nameB.startsWith(`${singleTerm}.`) ? 1 : 0;
+  if (prefixB !== prefixA)
+    return prefixB - prefixA;
+
+  if (nameA.length !== nameB.length)
+    return nameA.length - nameB.length;
+
+  const pathA = String(a?.path ?? '');
+  const pathB = String(b?.path ?? '');
+  const depthA = pathA.split('/').filter(Boolean).length;
+  const depthB = pathB.split('/').filter(Boolean).length;
+  if (depthA !== depthB)
+    return depthA - depthB;
+  if (pathA.length !== pathB.length)
+    return pathA.length - pathB.length;
+  return pathA.localeCompare(pathB, 'pl');
 }
 
 function scoringQuery(query, mode) {
@@ -248,6 +289,16 @@ export class DaemonRegistry extends ProviderRegistry {
 
     const response = await super.search(query, searchOptions);
     const queryForScore = scoringQuery(query, mode);
+
+    const filesOnly = response.results.length > 0 &&
+      response.results.every(result =>
+        (result.providerId ?? '') === 'files'
+      );
+    if (mode === 'files' || filesOnly) {
+      response.results.sort((a, b) =>
+        compareFileResults(a, b, queryForScore)
+      );
+    }
 
     for (const result of response.results) {
       result.score = scoreResult(queryForScore, result);

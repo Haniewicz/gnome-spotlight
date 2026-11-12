@@ -7,6 +7,7 @@ import GLib from 'gi://GLib';
 import { shortenPath } from '../../lib/format.js';
 import { parseLocateOutput } from '../../lib/files-parse.js';
 import { scorePathMatch, scoreResult } from '../../lib/ranking.js';
+import { fold } from '../../lib/text.js';
 import { ProviderPriority } from '../../lib/providers/registry.js';
 import {
   buildSearchQuery,
@@ -619,26 +620,50 @@ export function createProvider(options = {}) {
 
   function resultRows(rows, needle, limit) {
     const home = homeDirectory();
+    const foldedNeedle = fold(needle).trim();
+    // Multi-term queries have no single "whole name" to compare against; this
+    // mirrors the same condition in lib/path-index.js.
+    const singleTerm = foldedNeedle !== '' && !foldedNeedle.includes(' ')
+      ? foldedNeedle
+      : '';
+
     const scored = rows.map(row => {
       const baseScore = Number(row.score);
       const pathWeight = Number(row.pathWeight);
+      const path = String(row.path ?? '');
+      const name = fold(String(row.name || basename(path)));
       return {
         row,
+        path,
+        name,
         score: (Number.isFinite(baseScore) ? baseScore : 0) +
           scorePathMatch(needle, { path: row.path, homeDir: home }) +
           (Number.isFinite(pathWeight) ? pathWeight * PATH_WEIGHT_BONUS : 0),
+        exact: singleTerm !== '' && name === singleTerm ? 1 : 0,
+        wholeNamePrefix: singleTerm !== '' &&
+          name.startsWith(`${singleTerm}.`) ? 1 : 0,
+        depth: path.split('/').filter(Boolean).length,
       };
     });
 
     // The provider must stay within the requested limit, but which rows
     // survive is decided by the path-aware score rather than Tracker order.
+    // The tie-break matches lib/path-index.js: exact basename, whole-name
+    // prefix, shorter name, shallower/shorter path, then Polish collation.
     scored.sort((a, b) => {
       if (b.score !== a.score)
         return b.score - a.score;
-      const pathOrder = String(a.row.path).localeCompare(String(b.row.path), 'pl');
-      if (pathOrder !== 0)
-        return pathOrder;
-      return 0;
+      if (b.exact !== a.exact)
+        return b.exact - a.exact;
+      if (b.wholeNamePrefix !== a.wholeNamePrefix)
+        return b.wholeNamePrefix - a.wholeNamePrefix;
+      if (a.name.length !== b.name.length)
+        return a.name.length - b.name.length;
+      if (a.depth !== b.depth)
+        return a.depth - b.depth;
+      if (a.path.length !== b.path.length)
+        return a.path.length - b.path.length;
+      return a.path.localeCompare(b.path, 'pl');
     });
 
     return scored
@@ -731,6 +756,10 @@ export function createProvider(options = {}) {
         existing.isDirectory = existing.isDirectory === true ||
           row.isDirectory === true;
         existing.fromPath = true;
+        // The path index derives `name` from the real basename, so prefer it
+        // for the shared tie-break instead of relying on Tracker's column.
+        if (row.name)
+          existing.name = String(row.name);
       } else {
         byPath.set(path, { ...row });
       }
