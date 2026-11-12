@@ -233,6 +233,47 @@ test('commands mode strips the > prefix before searching', async () => {
   assertEqual(response.results.length, 1);
 });
 
+test('specialised commands modes route to the commands provider with mode', async () => {
+  const registry = new DaemonRegistry();
+  let received = null;
+  let receivedMode = null;
+  registry.register(makeProvider('commands', 0, [], {
+    prefix: '>',
+    search: (query, context) => {
+      received = query;
+      receivedMode = context?.mode;
+      return [makeResult('commands', `ssh:${query}`, `Host ${query}`, {
+        kind: 'Host SSH',
+      })];
+    },
+  }));
+
+  const response = await registry.search('ssh prod', { limit: 8 });
+
+  assertEqual(received, 'prod');
+  assertEqual(receivedMode, 'ssh');
+  assertEqual(response.results[0].kind, 'Host SSH');
+});
+
+test('an explicit commands mode also forwards the mode and strips its prefix', async () => {
+  const registry = new DaemonRegistry();
+  let received = null;
+  let receivedMode = null;
+  registry.register(makeProvider('commands', 0, [], {
+    prefix: '>',
+    search: (query, context) => {
+      received = query;
+      receivedMode = context?.mode;
+      return [makeResult('commands', `sys:${query}`, `Usługa ${query}`)];
+    },
+  }));
+
+  await registry.search('sys spotify', { mode: 'sys', limit: 8 });
+
+  assertEqual(received, 'spotify');
+  assertEqual(receivedMode, 'sys');
+});
+
 test('prefix queries still route to the matching provider', async () => {
   const registry = new DaemonRegistry();
   let plainCalled = false;

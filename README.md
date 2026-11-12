@@ -57,15 +57,43 @@ nie nadpisuje cudzych skrótów.
 
 ## Prefiksy
 
+| Prefiks | Tryb | Źródło wyników | Akcje |
+|---|---|---|---|
+| `>` | komendy | dowolne polecenie wpisane po prefiksie | uruchom w terminalu (`gnome-terminal`/`kgx`), kopiuj polecenie |
+| `ssh ` | SSH | aliasy z `~/.ssh/config` (cache 60 s; `Host *`, wildcardy i `Match` pomijane) | połącz przez SSH w terminalu, kopiuj adres |
+| `sys ` | usługi | jednostki `systemctl --user` przez D-Bus (`Manager.ListUnits`, tylko `Loaded`) | start / stop / restart / status; zmiany stanu przez `Manager.<Verb>Unit`, bez powłoki |
+| `snip ` | snippety | `$XDG_CONFIG_HOME/gnome-spotlight/snippets.json` | wstaw tekst do schowka |
+| `docker ` | kontenery | `docker ps --format` albo `podman ps --format`, gdy docker nie jest w `PATH` | otwórz logi, zatrzymaj kontener; bez powłoki, subprocess z timeoutem 300 ms |
+| `f ` | pliki | baza `locate` | otwórz plik, pokaż w folderze, uruchom w terminalu |
+| `cb ` / `clip…` | schowek | lokalna historia Shella | wstaw z historii, usuń wpis (`Ctrl+Enter`) |
+
 - `>` — komendy powłoki, np. `> systemctl --user restart spotify` (uruchamiane
   w terminalu, nigdy bezpośrednio przez proces Shella).
 - `f ` — zawężenie do plików, np. `f raport 2024`. Spacja po `f` jest częścią
   prefiksu, dzięki czemu zwykłe zapytania typu `firefox` działają normalnie.
+- `ssh `, `sys `, `snip ` i `docker ` ustawiają tryb daemona już podczas
+  pisania; aktywny tryb jest widoczny w stopce modala. Zapytanie po prefiksie
+  zawęża listę (np. `sys spotify` albo `ssh prod`), a sam prefiks pokazuje
+  wszystkie pozycje danego źródła.
+- `snip ` wstawia snippet tylko do schowka. Wklejanie do aktywnego okna nie jest
+  implementowane, bo wymagałoby przejęcia fokusu i wstrzyknięcia klawisza.
 - `cb ` albo `clip…` — historia schowka, np. `cb raport` albo `clip raport`.
   Wpis pojawia się po otwarciu modala; `Enter` wstawia jego treść z powrotem do
   schowka, a `Ctrl+Enter` usuwa wpis z historii. Historia jest lokalna dla
   Shella i zapisywana w `$XDG_CACHE_HOME/gnome-spotlight/clipboard.json`.
 - Bez prefiksu przeszukiwane są wszystkie włączone providery.
+
+Plik snippetów to tablica obiektów (albo mapa `keyword -> obiekt/tekst`):
+
+```json
+[
+  { "keyword": "sig", "name": "Podpis", "text": "Jan Kowalski\njan@example.com" }
+]
+```
+
+`keyword` jest pojedynczym słowem (bez spacji), `text` jest wymagany, a `name`
+jest opcjonalne (domyślnie równe `keyword`). Uszkodzony JSON oznacza pustą
+listę, nie błąd launchera.
 
 ## Klawisze
 
@@ -160,9 +188,9 @@ systemctl --user restart gnome-spotlightd.service
   obserwuje zmian w systemie plików.
 - Brak sieci: kursy walut są tylko z lokalnego cache (`currency-rates`), a ich
   brak oznacza brak wyniku walutowego, nie zmyśloną wartość.
-- Brak telemetrii, snippetów i plugin API (poza MVP). Historia schowka jest
-  lokalna (maks. 100 wpisów / 64 KiB na wpis, TTL 7 dni) i nie jest wysyłana do
-  daemona.
+- Brak telemetrii i plugin API (poza MVP). Historia schowka jest lokalna
+  (maks. 100 wpisów / 64 KiB na wpis, TTL 7 dni) i nie jest wysyłana do
+  daemona. Snippety są tylko wstawiane do schowka (bez symulacji wklejania).
 - Komendy wymagają terminala; bez niego wynik jest widoczny, ale wyszarzony.
 - Panel podglądu pokazuje maksymalnie 6 wierszy metadanych; podgląd tekstu
   pliku jest ograniczony do 200 linii i nie jest edytorem. Obrazy i pierwsze
@@ -274,6 +302,9 @@ stylesheet.css
 schemas/                # GSettings
 lib/                    # PURE: ranking, fuzzy, text, calculator, format, usage,
                         #       clipboard-store, searchStream (merge/stabilize/LRU)
+lib/ssh-config.js       # PURE: parser ~/.ssh/config (alias, host, user, port)
+lib/snippets.js         # PURE: tolerancyjny parser snippets.json
+lib/systemd-units.js    # PURE: ranking jednostek + argv systemctl --user
 lib/preview-model.js    # PURE: klasyfikacja pliku, metadane, snippet tekstu
 lib/daemonClient.js     # Gio.DBus: probe, Search, NameOwnerChanged, cancel
 lib/providers/          # aplikacje, okna, ustawienia, komendy, pliki, kalkulator,
@@ -283,6 +314,7 @@ tools/deploy.sh
 tools/install-daemon.sh    # daemon: systemd --user albo aktywacja D-Bus
 tools/bench-daemon.sh      # 100 wywołań D-Bus stałym klientem gjs
 tools/headless-smoke.sh
+searchd/providers/commands.js  # >, ssh, sys, snip, docker (D-Bus/Subprocess async)
 tools/headless-perf.sh
 tests/run_all.py
 tests/js/               # testy PURE (gjs -m)

@@ -21,17 +21,55 @@ export const REMOTE_PROVIDER_ID = 'remote';
 const MODE_PREFIXES = {
   commands: '>',
   files: 'f ',
+  ssh: 'ssh ',
+  sys: 'sys ',
+  snip: 'snip ',
+  docker: 'docker ',
+};
+
+// ssh/sys/snip/docker are alternative modes of the same `commands` provider.
+const MODE_PROVIDER_IDS = {
+  ssh: 'commands',
+  sys: 'commands',
+  snip: 'commands',
+  docker: 'commands',
 };
 
 function normalizeMode(mode) {
   return String(mode ?? '').trim().toLowerCase();
 }
 
+function prefixModeForQuery(query) {
+  const value = String(query ?? '').trim();
+  const lower = value.toLowerCase();
+  for (const [mode, prefix] of Object.entries(MODE_PREFIXES)) {
+    if (value.startsWith(prefix) || lower === prefix.trim())
+      return mode;
+  }
+  return '';
+}
+
 function stripModePrefix(mode, query) {
+  const text = String(query ?? '');
   const prefix = MODE_PREFIXES[mode];
-  if (!prefix || !query.startsWith(prefix))
-    return query;
-  return query.slice(prefix.length).trimStart();
+  if (!prefix)
+    return text;
+
+  if (text.toLowerCase().startsWith(prefix.toLowerCase()))
+    return text.slice(prefix.length).trimStart();
+  if (text.trim().toLowerCase() === prefix.trim())
+    return '';
+  return text;
+}
+
+function withMode(provider, mode) {
+  if (mode === '')
+    return provider;
+  return {
+    ...provider,
+    search: (query, context = {}) =>
+      provider.search(query, { ...(context ?? {}), mode }),
+  };
 }
 
 function normalizeLimit(value, fallback) {
@@ -45,10 +83,12 @@ function normalizeLimit(value, fallback) {
 
 function scoringQuery(query, mode) {
   const value = String(query ?? '').trim();
-  if (mode === 'commands' || value.startsWith('>'))
-    return value.replace(/^>\s*/, '');
-  if (mode === 'files' || value.startsWith('f '))
-    return value.replace(/^f\s+/, '');
+  const explicit = normalizeMode(mode);
+  const selected = explicit !== '' && MODE_PREFIXES[explicit]
+    ? explicit
+    : prefixModeForQuery(value);
+  if (selected !== '' && MODE_PREFIXES[selected])
+    return stripModePrefix(selected, value);
   return value;
 }
 
@@ -105,14 +145,30 @@ export class DaemonRegistry extends ProviderRegistry {
         : this._defaultMode
     );
 
-    if (mode === '' || mode === 'all')
+    if (mode === '' || mode === 'all') {
+      const prefixMode = prefixModeForQuery(query);
+      if (prefixMode !== '') {
+        const providerId = MODE_PROVIDER_IDS[prefixMode] ?? prefixMode;
+        const provider = this._providers.find(item => item.id === providerId);
+        if (!provider)
+          return [];
+        return [{
+          provider: withMode(provider, prefixMode),
+          query: stripModePrefix(prefixMode, query),
+        }];
+      }
       return super._selectProviders(query, options);
+    }
 
-    const provider = this._providers.find(item => item.id === mode);
+    const providerId = MODE_PROVIDER_IDS[mode] ?? mode;
+    const provider = this._providers.find(item => item.id === providerId);
     if (!provider)
       return [];
 
-    return [{ provider, query: stripModePrefix(mode, query) }];
+    return [{
+      provider: withMode(provider, mode),
+      query: stripModePrefix(mode, query),
+    }];
   }
 
   _remember(results) {

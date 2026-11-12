@@ -328,7 +328,8 @@ function main(argv) {
       const maxResults = normalizeLimit(limit);
 
       if (selectedMode !== '' &&
-          !['all', 'apps', 'settings', 'files', 'commands', 'calculator']
+          !['all', 'apps', 'settings', 'files', 'commands', 'calculator',
+            'ssh', 'sys', 'snip', 'docker']
             .includes(selectedMode)) {
         throw new Error(`unknown search mode: ${selectedMode}`);
       }
