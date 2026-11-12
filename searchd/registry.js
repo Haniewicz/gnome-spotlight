@@ -233,11 +233,31 @@ export class DaemonRegistry extends ProviderRegistry {
       }
     }
 
+    // `remote` fans out to native services that may not be running. They are
+    // skipped without an errors entry, so expose the count explicitly.
+    let skipped = 0;
+    for (const provider of this._providers) {
+      if (!activeProviders.has(provider.id))
+        continue;
+      let value = 0;
+      try {
+        value = typeof provider.getSkipped === 'function'
+          ? provider.getSkipped()
+          : provider.skipped;
+      } catch {
+        value = 0;
+      }
+      const count = Number(value);
+      if (Number.isFinite(count) && count > 0)
+        skipped += Math.floor(count);
+    }
+
     const stats = {
       total: response.totalMatched,
       truncated: response.truncated,
       ms,
       errors,
+      skipped,
     };
 
     this._remember(response.results);

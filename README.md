@@ -102,10 +102,17 @@ Daemon konsumuje aplikacje, które same rejestrują się jako
 
 Wyniki trafiają do osobnych sekcji `remote:<BusName>` (np.
 `remote:org.gnome.Settings.SearchProvider`, `remote:org.gnome.Calculator.SearchProvider`)
-z rodzajem `Natywne`. Każde wywołanie `GetInitialResultSet` i
-`GetResultMetas` ma budżet 150 ms; błąd albo timeout jednego providera nie
-usuwa wyników pozostałych. Własny bus name `org.gnome.Spotlight` jest pomijany,
-podobnie jak deskryptory bez `BusName`/`ObjectPath`.
+z rodzajem `Natywne`. Launcher nie uruchamia aplikacji przy wpisywaniu i nie
+odpytuje nieuruchomionych providerów: najpierw sprawdzany jest właściciel nazwy
+D-Bus (`NameHasOwner`), a bez właściciela provider jest pomijany bez wpisu w
+`errors` (licznik `skipped`). Proxy powstaje z `DO_NOT_AUTO_START` i
+`DO_NOT_LOAD_PROPERTIES`, więc `AutoStart=true` z pliku `.ini` nie omija tej
+reguły. Każde wywołanie `GetInitialResultSet` i `GetResultMetas` ma budżet
+80 ms, cały provider `remote` odpowiada w maksymalnie 100 ms, a z remote
+wracają najwyżej 3 najlepiej ocenione wyniki (dedupe po `busName + remoteId`).
+Błąd albo timeout jednego providera nie usuwa wyników pozostałych. Własny bus
+name `org.gnome.Spotlight` jest pomijany, podobnie jak deskryptory bez
+`BusName`/`ObjectPath`.
 
 Lista znalezionych plików bez uruchamiania daemona:
 

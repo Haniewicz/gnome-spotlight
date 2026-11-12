@@ -10,19 +10,73 @@ import GLib from 'gi://GLib';
 import { discoverProviders, parseSearchProviderIni } from '../../lib/search-providers-ini.js';
 import { scoreResult } from '../../lib/ranking.js';
 import { ProviderPriority } from '../../lib/providers/registry.js';
+import {
+  capRemoteResults,
+  selectRemoteCandidates,
+} from '../../lib/remote-candidates.js';
 
 const PROVIDER_ID = 'remote';
 export const SEARCH_PROVIDER_INTERFACE = 'org.gnome.Shell.SearchProvider2';
 const OWN_BUS_NAME = 'org.gnome.Spotlight';
-const DEFAULT_TIMEOUT_MS = 150;
-const DEFAULT_LIMIT = 8;
+const DBUS_BUS_NAME = 'org.freedesktop.DBus';
+const DBUS_OBJECT_PATH = '/org/freedesktop/DBus';
+const DBUS_INTERFACE = 'org.freedesktop.DBus';
+const DEFAULT_TIMEOUT_MS = 80;
+const DEFAULT_TOTAL_BUDGET_MS = 100;
+// Return a little before the hard budget so registry-measured `stats.ms.remote`
+// cannot overshoot because timers fire late.
+const BUDGET_SAFETY_MS = 5;
+const DEFAULT_LIMIT = 3;
 const DEFAULT_FAILURE_COOLDOWN_MS = 30 * 1000;
 const USER_SEARCH_PROVIDER_DIR = 'gnome-shell/search-providers';
 const SYSTEM_SEARCH_PROVIDER_DIR = '/usr/share/gnome-shell/search-providers';
 
 export const REMOTE_PROVIDER_ID = PROVIDER_ID;
 export const REMOTE_CALL_TIMEOUT_MS = DEFAULT_TIMEOUT_MS;
+export const REMOTE_BUDGET_MS = DEFAULT_TOTAL_BUDGET_MS;
 export const NATIVE_KIND = 'Natywne';
+
+const SEARCH_PROVIDER_XML = `
+<node>
+  <interface name="org.gnome.Shell.SearchProvider2">
+    <method name="GetInitialResultSet">
+      <arg type="as" name="terms" direction="in"/>
+      <arg type="as" name="results" direction="out"/>
+    </method>
+    <method name="GetSubsearchResultSet">
+      <arg type="as" name="previousResults" direction="in"/>
+      <arg type="as" name="terms" direction="in"/>
+      <arg type="as" name="results" direction="out"/>
+    </method>
+    <method name="GetResultMetas">
+      <arg type="as" name="identifiers" direction="in"/>
+      <arg type="aa{sv}" name="metas" direction="out"/>
+    </method>
+    <method name="ActivateResult">
+      <arg type="s" name="identifier" direction="in"/>
+      <arg type="as" name="terms" direction="in"/>
+      <arg type="u" name="timestamp" direction="in"/>
+    </method>
+    <method name="LaunchSearch">
+      <arg type="as" name="terms" direction="in"/>
+      <arg type="u" name="timestamp" direction="in"/>
+    </method>
+  </interface>
+</node>`;
+
+let searchProviderInfo = null;
+
+function interfaceInfo() {
+  if (searchProviderInfo !== null)
+    return searchProviderInfo;
+  try {
+    const node = Gio.DBusNodeInfo.new_for_xml(SEARCH_PROVIDER_XML);
+    searchProviderInfo = node.lookup_interface(SEARCH_PROVIDER_INTERFACE);
+  } catch {
+    searchProviderInfo = null;
+  }
+  return searchProviderInfo;
+}
 
 function asList(value) {
   if (value === undefined || value === null)
@@ -344,12 +398,20 @@ function timestampValue(value) {
 /**
  * Create the daemon-side `remote` provider.
  *
+ * Native services are probed with `org.freedesktop.DBus.NameHasOwner` before
+ * any proxy is constructed. Only an already running provider is queried: the
+ * proxy uses DO_NOT_AUTO_START (and DO_NOT_LOAD_PROPERTIES), so typing in the
+ * launcher never activates Calendar, Weather, Software and friends. A provider
+ * without an owner is skipped without an `errors` entry and counted in
+ * `skipped`.
+ *
  * Options:
  * - `connection` / `dbus`: optional Gio.DBusConnection (tests inject a fake).
  * - `providers` / `iniPaths` / `paths`: explicit descriptors or .ini paths.
  * - `userDir`, `systemDir`: directories or lists of .ini paths to inspect.
- * - `timeoutMs`: per D-Bus call budget (default 150 ms).
- * - `limit`: maximum results from this provider (default 8).
+ * - `timeoutMs`: per D-Bus call budget (default 80 ms).
+ * - `totalBudgetMs` / `budgetMs`: whole remote provider budget (default 100 ms).
+ * - `limit`: maximum results from this provider (default 3).
  * - `failureCooldownMs`: skip a provider that just timed out for this long.
  * - `cacheTtlMs`: optional short-lived per-query cache (default 0/off).
  *
@@ -362,6 +424,11 @@ export function createProvider(options = {}) {
   const timeoutMs = Number.isFinite(Number(settings.timeoutMs))
     ? Math.max(1, Math.floor(Number(settings.timeoutMs)))
     : DEFAULT_TIMEOUT_MS;
+  const totalBudgetMs = Number.isFinite(Number(settings.totalBudgetMs))
+    ? Math.max(1, Math.floor(Number(settings.totalBudgetMs)))
+    : Number.isFinite(Number(settings.budgetMs))
+      ? Math.max(1, Math.floor(Number(settings.budgetMs)))
+      : DEFAULT_TOTAL_BUDGET_MS;
   const limit = Number.isFinite(Number(settings.limit))
     ? Math.max(0, Math.floor(Number(settings.limit)))
     : DEFAULT_LIMIT;
@@ -388,8 +455,10 @@ export function createProvider(options = {}) {
 
   const blockedUntil = new Map();
   const resultsById = new Map();
+  const proxyCache = new Map();
   const cache = new Map();
   let lastErrors = [];
+  let lastSkipped = 0;
 
   function errorsFor(config, stage, error) {
     return {
@@ -412,10 +481,51 @@ export function createProvider(options = {}) {
     return true;
   }
 
-  function _call(config, method, parameters, replyType) {
+  function remainingMs(state) {
+    if (!state)
+      return Number.POSITIVE_INFINITY;
+    return state.deadlineAt - Date.now();
+  }
+
+  function timeoutError(config, method, budget) {
+    const error = new Error(
+      `${config.busName} ${method} timed out after ${budget} ms`
+    );
+    error.reason = 'timeout';
+    return error;
+  }
+
+  function _call(config, method, parameters, replyType, callOptions = {}) {
     return new Promise((resolve, reject) => {
-      if (!connection || typeof connection.call !== 'function') {
+      const optionsObject = callOptions && typeof callOptions === 'object'
+        ? callOptions
+        : {};
+      const state = optionsObject.state ?? null;
+      const proxy = optionsObject.proxy ?? null;
+      const interfaceName = optionsObject.interfaceName ?? SEARCH_PROVIDER_INTERFACE;
+      const flags = optionsObject.flags ?? Gio.DBusCallFlags.NO_AUTO_START;
+      const proxyCall = proxy && typeof proxy.call === 'function';
+      const canCall = proxyCall ||
+        (connection && typeof connection.call === 'function');
+
+      if (state?.cancelled) {
+        reject(timeoutError(config, method, 0));
+        return;
+      }
+      if (!canCall) {
         reject(new Error('session bus unavailable'));
+        return;
+      }
+
+      const requestedTimeout = Number.isFinite(Number(optionsObject.timeoutMs))
+        ? Math.max(1, Math.floor(Number(optionsObject.timeoutMs)))
+        : timeoutMs;
+      const callTimeout = Math.max(
+        0,
+        Math.min(requestedTimeout, remainingMs(state))
+      );
+      if (callTimeout <= 0) {
+        reject(timeoutError(config, method, requestedTimeout));
         return;
       }
 
@@ -431,49 +541,173 @@ export function createProvider(options = {}) {
           clearTimeout(timer);
           timer = null;
         }
+        if (state && cancellable)
+          state.cancellables.delete(cancellable);
         callback(value);
       };
 
       timer = setTimeout(() => {
-        const error = new Error(
-          `${config.busName} ${method} timed out after ${timeoutMs} ms`
-        );
-        error.reason = 'timeout';
         try {
           cancellable?.cancel();
         } catch {
           // Cancelling an already finished call is harmless.
         }
-        finish(reject, error);
-      }, timeoutMs);
+        finish(reject, timeoutError(config, method, callTimeout));
+      }, callTimeout);
+
+      const callback = (source, result) => {
+        if (settled)
+          return;
+        try {
+          const reply = source && typeof source.call_finish === 'function'
+            ? source.call_finish(result)
+            : result;
+          finish(resolve, reply);
+        } catch (error) {
+          finish(reject, error);
+        }
+      };
 
       try {
         cancellable = new Gio.Cancellable();
-        connection.call(
+        if (state)
+          state.cancellables.add(cancellable);
+        if (proxyCall) {
+          proxy.call(
+            method,
+            parameters,
+            flags,
+            callTimeout,
+            cancellable,
+            callback
+          );
+        } else {
+          connection.call(
+            config.busName,
+            config.objectPath,
+            interfaceName,
+            method,
+            parameters,
+            replyType,
+            flags,
+            callTimeout,
+            cancellable,
+            callback
+          );
+        }
+      } catch (error) {
+        finish(reject, error);
+      }
+    });
+  }
+
+  /**
+   * Probe the bus name without touching the service. NameHasOwner never
+   * activates a name, and the call itself also carries NO_AUTO_START.
+   */
+  async function hasOwner(config, state) {
+    if (state?.cancelled || remainingMs(state) <= 0)
+      return false;
+
+    try {
+      const reply = await _call(
+        { busName: DBUS_BUS_NAME, objectPath: DBUS_OBJECT_PATH },
+        'NameHasOwner',
+        new GLib.Variant('(s)', [config.busName]),
+        new GLib.VariantType('(b)'),
+        {
+          state,
+          interfaceName: DBUS_INTERFACE,
+          flags: Gio.DBusCallFlags.NO_AUTO_START,
+          timeoutMs: Math.min(timeoutMs, DEFAULT_TIMEOUT_MS),
+        }
+      );
+      const value = unpack(reply);
+      if (Array.isArray(value))
+        return Boolean(value[0]);
+      return Boolean(value);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Build (and cache) the provider proxy only after NameHasOwner succeeded.
+   * DO_NOT_AUTO_START is the hard guarantee; even a descriptor with
+   * AutoStart=true has already been filtered out before this point.
+   */
+  function ensureProxy(config, state) {
+    const key = configKey(config);
+    if (proxyCache.has(key))
+      return Promise.resolve(proxyCache.get(key));
+    if (!connection || typeof Gio.DBusProxy?.new !== 'function')
+      return Promise.resolve(null);
+    if (state?.cancelled || remainingMs(state) <= 0)
+      return Promise.resolve(null);
+
+    return new Promise(resolve => {
+      let settled = false;
+      let timer = null;
+      let cancellable = null;
+
+      const finish = proxy => {
+        if (settled)
+          return;
+        settled = true;
+        if (timer !== null) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        if (state && cancellable)
+          state.cancellables.delete(cancellable);
+        if (proxy)
+          proxyCache.set(key, proxy);
+        resolve(proxy ?? null);
+      };
+
+      const buildTimeout = Math.max(
+        1,
+        Math.min(timeoutMs, remainingMs(state))
+      );
+      timer = setTimeout(() => {
+        try {
+          cancellable?.cancel();
+        } catch {
+          // Cancelling an already finished proxy build is harmless.
+        }
+        finish(null);
+      }, buildTimeout);
+
+      try {
+        cancellable = new Gio.Cancellable();
+        if (state)
+          state.cancellables.add(cancellable);
+        Gio.DBusProxy.new(
+          connection,
+          Gio.DBusProxyFlags.DO_NOT_AUTO_START |
+            Gio.DBusProxyFlags.DO_NOT_LOAD_PROPERTIES,
+          interfaceInfo(),
           config.busName,
           config.objectPath,
           SEARCH_PROVIDER_INTERFACE,
-          method,
-          parameters,
-          replyType,
-          Gio.DBusCallFlags.NONE,
-          timeoutMs,
           cancellable,
           (source, result) => {
             if (settled)
               return;
             try {
-              const reply = source && typeof source.call_finish === 'function'
-                ? source.call_finish(result)
-                : result;
-              finish(resolve, reply);
-            } catch (error) {
-              finish(reject, error);
+              const proxy = source && typeof source.new_finish === 'function'
+                ? source.new_finish(result)
+                : Gio.DBusProxy.new_finish(result);
+              finish(proxy);
+            } catch {
+              // Fall back to a direct NO_AUTO_START call below; this keeps
+              // fake connections used by tests working as well.
+              finish(null);
             }
           }
         );
-      } catch (error) {
-        finish(reject, error);
+      } catch {
+        finish(null);
       }
     });
   }
@@ -547,24 +781,35 @@ export function createProvider(options = {}) {
     return result;
   }
 
-  async function searchProvider(config, terms, query) {
+  async function searchProvider(config, terms, query, state) {
+    if (state?.cancelled || remainingMs(state) <= 0)
+      return [];
+
+    const proxy = await ensureProxy(config, state);
+    if (state?.cancelled || remainingMs(state) <= 0)
+      return [];
+
     let ids;
     try {
       const reply = await _call(
         config,
         'GetInitialResultSet',
         new GLib.Variant('(as)', [terms]),
-        new GLib.VariantType('(as)')
+        new GLib.VariantType('(as)'),
+        { proxy, state }
       );
       ids = toStringArray(firstReplyValue(reply));
     } catch (error) {
-      lastErrors.push(errorsFor(config, 'initial', error));
-      if (errorReason(error) === 'timeout' && failureCooldownMs > 0)
-        blockedUntil.set(config.busName, now() + failureCooldownMs);
+      const exhausted = state?.cancelled || remainingMs(state) <= 0;
+      if (!exhausted) {
+        lastErrors.push(errorsFor(config, 'initial', error));
+        if (errorReason(error) === 'timeout' && failureCooldownMs > 0)
+          blockedUntil.set(config.busName, now() + failureCooldownMs);
+      }
       return [];
     }
 
-    if (ids.length === 0)
+    if (ids.length === 0 || remainingMs(state) <= 0)
       return [];
 
     const wanted = ids.slice(0, limit);
@@ -574,13 +819,17 @@ export function createProvider(options = {}) {
         config,
         'GetResultMetas',
         new GLib.Variant('(as)', [wanted]),
-        new GLib.VariantType('(aa{sv})')
+        new GLib.VariantType('(aa{sv})'),
+        { proxy, state }
       );
       metas = metasMap(firstReplyValue(reply));
     } catch (error) {
-      lastErrors.push(errorsFor(config, 'metas', error));
-      if (errorReason(error) === 'timeout' && failureCooldownMs > 0)
-        blockedUntil.set(config.busName, now() + failureCooldownMs);
+      const exhausted = state?.cancelled || remainingMs(state) <= 0;
+      if (!exhausted) {
+        lastErrors.push(errorsFor(config, 'metas', error));
+        if (errorReason(error) === 'timeout' && failureCooldownMs > 0)
+          blockedUntil.set(config.busName, now() + failureCooldownMs);
+      }
       return [];
     }
 
@@ -598,17 +847,23 @@ export function createProvider(options = {}) {
     title: 'Natywne aplikacje',
     priority: ProviderPriority.LOW,
     prefix: null,
-    // Each native call has a 150 ms budget; the outer registry budget must
-    // cover both stages plus callback scheduling.
-    timeoutMs: timeoutMs * 2 + 50,
+    // The whole native fan-out answers within totalBudgetMs (100 ms); the
+    // registry's outer guard only needs a small scheduling margin.
+    timeoutMs: totalBudgetMs + 25,
     get errors() {
       return lastErrors.slice();
+    },
+    get skipped() {
+      return lastSkipped;
     },
     getProviders() {
       return configs.map(config => ({ ...config }));
     },
     getErrors() {
       return lastErrors.slice();
+    },
+    getSkipped() {
+      return lastSkipped;
     },
     get nativeProviders() {
       return configs.map(config => ({ ...config }));
@@ -621,48 +876,72 @@ export function createProvider(options = {}) {
       cache.clear();
       resultsById.clear();
       blockedUntil.clear();
+      proxyCache.clear();
       lastErrors = [];
+      lastSkipped = 0;
     },
     async search(query) {
       const terms = String(query ?? '').trim().split(/\s+/).filter(Boolean);
-      if (terms.length === 0 || limit === 0)
+      if (terms.length === 0 || limit === 0) {
+        lastErrors = [];
+        lastSkipped = 0;
         return [];
+      }
 
       const cacheKey = terms.join(' ');
       const cached = cacheTtlMs > 0 ? cache.get(cacheKey) : null;
       if (cached && now() < cached.expires) {
         lastErrors = cached.errors.slice();
+        lastSkipped = cached.skipped;
         return cached.results.map(result => ({ ...result }));
       }
 
       lastErrors = [];
+      lastSkipped = 0;
+      const startedAt = Date.now();
+      const state = {
+        deadlineAt: startedAt + Math.max(1, totalBudgetMs - BUDGET_SAFETY_MS),
+        cancelled: false,
+        cancellables: new Set(),
+      };
+
       const active = configs.filter(config => !isBlocked(config));
-      const settled = await Promise.all(
-        active.map(config => searchProvider(config, terms, query))
+      const owners = new Map();
+      await Promise.all(active.map(async config => {
+        owners.set(config.busName, await hasOwner(config, state));
+      }));
+
+      // Ownerless providers are skipped silently: no proxy, no call, no
+      // errors entry. AutoStart from the .ini never overrides this check.
+      const selected = selectRemoteCandidates({
+        owners,
+        providers: active,
+        limit: active.length,
+        now: now(),
+      });
+      lastSkipped = active.reduce(
+        (count, config) => count + (owners.get(config.busName) ? 0 : 1),
+        0
       );
 
-      const seen = new Set();
+      const settled = await Promise.all(
+        selected.map(config => searchProvider(config, terms, query, state))
+      );
+      state.cancelled = true;
+
       const results = [];
       for (const section of settled) {
-        for (const result of section) {
-          if (seen.has(result.id))
-            continue;
-          seen.add(result.id);
+        for (const result of section)
           results.push(result);
-        }
       }
-
-      results.sort((a, b) =>
-        b.score - a.score ||
-        String(a.title ?? '').localeCompare(String(b.title ?? ''), 'pl')
-      );
-      const limited = results.slice(0, limit);
+      const limited = capRemoteResults(results, limit);
 
       if (cacheTtlMs > 0) {
         cache.set(cacheKey, {
           expires: now() + cacheTtlMs,
           results: limited.map(result => ({ ...result })),
           errors: lastErrors.slice(),
+          skipped: lastSkipped,
         });
       }
 
@@ -721,7 +1000,10 @@ export function createProvider(options = {}) {
             activationTerms,
             timestampValue(timestamp),
           ]),
-          new GLib.VariantType('()')
+          new GLib.VariantType('()'),
+          // Explicit activation may start the application; only searching
+          // is forbidden from doing so.
+          { flags: Gio.DBusCallFlags.NONE }
         );
         return true;
       } catch (error) {

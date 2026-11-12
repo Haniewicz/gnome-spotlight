@@ -73,6 +73,7 @@ PURE_MODULES = [
     "lib/clipboard-store.js",
     "lib/searchStream.js",
     "lib/search-providers-ini.js",
+    "lib/remote-candidates.js",
     "searchd/registry.js",
     "searchd/serialize.js",
     "searchd/providers/commands.js",
@@ -111,6 +112,8 @@ REQUIRED_FILES = [
     "searchd/providers/calculator.js",
     "searchd/providers/remote.js",
     "lib/search-providers-ini.js",
+    "lib/remote-candidates.js",
+    "tests/js/remote-budget.test.js",
     "tests/js/search-providers-ini.test.js",
     "tools/install-daemon.sh",
     "tools/bench-daemon.sh",
@@ -425,6 +428,30 @@ def check_daemon_isolation() -> None:
         ok(f"searchd/ has no St/Shell/Clutter imports ({len(files)} files)")
 
 
+def check_remote_autostart_guard() -> None:
+    """Native providers may only be queried when their bus name is owned."""
+    path = ROOT / "searchd" / "providers" / "remote.js"
+    if not path.is_file():
+        fail("searchd/providers/remote.js is missing")
+        return
+
+    source = read_text(path)
+    required = [
+        "NameHasOwner",
+        "DO_NOT_AUTO_START",
+        "DO_NOT_LOAD_PROPERTIES",
+    ]
+    missing = [token for token in required if token not in source]
+    if missing:
+        fail("remote provider misses autostart guard: " + ", ".join(missing))
+        return
+    if "_sync(" in source:
+        fail("remote provider must not use synchronous D-Bus calls")
+        return
+
+    ok("remote provider: NameHasOwner + DO_NOT_AUTO_START, no _sync calls")
+
+
 def check_extension_esm() -> None:
     path = ROOT / "extension.js"
     if not path.is_file():
@@ -552,6 +579,7 @@ def main() -> int:
     check_daemon_isolation()
     check_extension_esm()
     check_frontend_daemon_path()
+    check_remote_autostart_guard()
 
     passed_files, total_passed, total_failed = run_tests()
 
