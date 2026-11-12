@@ -141,6 +141,9 @@ REQUIRED_FILES = [
     "tests/js/preview-model.test.js",
     "tests/js/window-actions.test.js",
     "tests/js/clipboard-store.test.js",
+    "tests/js/ranking-path.test.js",
+    "tools/package-release.sh",
+    "tools/install.sh",
     "tests/run_all.py",
 ]
 

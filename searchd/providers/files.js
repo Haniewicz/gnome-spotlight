@@ -6,7 +6,7 @@ import GLib from 'gi://GLib';
 
 import { shortenPath } from '../../lib/format.js';
 import { parseLocateOutput } from '../../lib/files-parse.js';
-import { scoreResult } from '../../lib/ranking.js';
+import { scorePathMatch, scoreResult } from '../../lib/ranking.js';
 import { ProviderPriority } from '../../lib/providers/registry.js';
 import {
   buildSearchQuery,
@@ -17,6 +17,11 @@ import {
 const PROVIDER_ID = 'files';
 const DEFAULT_LIMIT = 8;
 const TRACKER_LIMIT = 8;
+// Tracker's own FTS ordering is not the launcher's ordering: a query such as
+// "DESIGN" returns many emulated Windows DLLs before a project's DESIGN.md.
+// Fetch a wider candidate window, score it with the shared path ranking and
+// only then apply the public limit below.
+const TRACKER_CANDIDATE_LIMIT = 64;
 const TRACKER_TIMEOUT_MS = 120;
 const TRACKER_CACHE_TTL_MS = 5 * 1000;
 const TRACKER_CACHE_MAX = 32;
@@ -547,11 +552,36 @@ export function createProvider(options = {}) {
     }));
   }
 
-  function resultRows(rows) {
+  function resultRows(rows, needle, limit) {
     const home = homeDirectory();
-    return rows.map(row =>
-      pathToResult(row.path, home, SUBTITLE_LENGTH, row)
-    );
+    const scored = rows.map(row => {
+      const baseScore = Number(row.score);
+      return {
+        row,
+        score: (Number.isFinite(baseScore) ? baseScore : 0) +
+          scorePathMatch(needle, { path: row.path, homeDir: home }),
+      };
+    });
+
+    // The provider must stay within the requested limit, but which rows
+    // survive is decided by the path-aware score rather than Tracker order.
+    scored.sort((a, b) => {
+      if (b.score !== a.score)
+        return b.score - a.score;
+      const pathOrder = String(a.row.path).localeCompare(String(b.row.path), 'pl');
+      if (pathOrder !== 0)
+        return pathOrder;
+      return 0;
+    });
+
+    return scored
+      .slice(0, Math.max(0, limit))
+      .map(({ row, score }) =>
+        pathToResult(row.path, home, SUBTITLE_LENGTH, {
+          ...row,
+          score,
+        })
+      );
   }
 
   async function searchTracker(needle, limit) {
@@ -559,8 +589,12 @@ export function createProvider(options = {}) {
     if (!connection)
       return { rows: [], timedOut: false, error: trackerError };
 
-    const sparql = buildSearchQuery(needle, { limit, contentSearch: true });
-    return queryTracker(connection, sparql, limit, TRACKER_TIMEOUT_MS);
+    const candidates = Math.max(limit, TRACKER_CANDIDATE_LIMIT);
+    const sparql = buildSearchQuery(needle, {
+      limit: candidates,
+      contentSearch: true,
+    });
+    return queryTracker(connection, sparql, candidates, TRACKER_TIMEOUT_MS);
   }
 
   return {
@@ -629,7 +663,7 @@ export function createProvider(options = {}) {
       const cached = cacheGet(key);
       if (cached) {
         setStats(cached.source, false, startedAt);
-        return resultRows(cached.rows);
+        return resultRows(cached.rows, needle, limit);
       }
 
       if (source === SOURCE_LOCATE) {
@@ -637,7 +671,7 @@ export function createProvider(options = {}) {
         const rows = locateRows(paths);
         setStats(SOURCE_LOCATE, false, startedAt);
         cacheSet(key, rows, SOURCE_LOCATE);
-        return resultRows(rows);
+        return resultRows(rows, needle, limit);
       }
 
       const result = await searchTracker(needle, limit);
@@ -658,12 +692,12 @@ export function createProvider(options = {}) {
         const rows = locateRows(paths);
         setStats(SOURCE_LOCATE, false, startedAt);
         cacheSet(key, rows, SOURCE_LOCATE);
-        return resultRows(rows);
+        return resultRows(rows, needle, limit);
       }
 
       setStats(SOURCE_TRACKER, false, startedAt);
       cacheSet(key, result.rows, SOURCE_TRACKER);
-      return resultRows(result.rows);
+      return resultRows(result.rows, needle, limit);
     },
   };
 }

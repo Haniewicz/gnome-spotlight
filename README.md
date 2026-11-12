@@ -24,31 +24,40 @@ Przy `enable()` rozszerzenie asynchronicznie rozgrzewa cache aplikacji, paneli U
 
 ## Instalacja
 
-Z katalogu repozytorium:
+Z katalogu repozytorium (jedno polecenie instaluje rozszerzenie i daemon):
 
 ```bash
-bash tools/deploy.sh
-```
-
-Skrypt pakuje ZIP (`gnome-extensions pack` ze schematem i `lib/`), instaluje go
-przez `gnome-extensions install --force`, wykonuje `disable`/`enable` i sprawdza
-`gnome-extensions info`. Sukces oznacza stan `ACTIVE`. Jeśli Shell nie zna UUID
-(np. brak sesji GNOME albo rozszerzenie nie było jeszcze włączone), skrypt kończy
-się kodem ≠ 0 i komunikatem „zarejestruj UUID po zalogowaniu”.
-
-Wariant z innym UUID (np. do testów obok zainstalowanej wersji):
-
-```bash
-bash tools/deploy.sh --uuid-suffix test
-```
-
-Dwie kopie (np. `spotlight@haniewicz.dev` i wariant z `--uuid-suffix`) mogą działać jednocześnie, bo nazwy GType są wyprowadzane per UUID.
-
-Po instalacji włącz rozszerzenie w aplikacji „Rozszerzenia” lub:
-
-```bash
+bash tools/install.sh
 gnome-extensions enable spotlight@haniewicz.dev
 gnome-extensions prefs spotlight@haniewicz.dev
+```
+
+`tools/install.sh` pakuje ZIP (`gnome-extensions pack` ze schematem i `lib/`),
+instaluje go w `~/.local/share/gnome-shell/extensions/spotlight@haniewicz.dev`,
+uruchamia `tools/install-daemon.sh` i sprawdza `gnome-extensions info`. Sukces
+oznacza stan `ACTIVE`; jeśli Shell nie zna jeszcze UUID, skrypt kończy się kodem
+≠ 0 i przypomina: „wyloguj się i zaloguj, jeśli UUID nie jest jeszcze znany
+Shellowi”. Wariant z innym UUID (np. do testów obok zainstalowanej wersji) nadal
+obsługuje `bash tools/deploy.sh --uuid-suffix test`.
+
+## Co zawiera `dist/`
+
+Wydanie buduje `tools/package-release.sh [--version X.Y.Z]`; wersja domyślnie
+pochodzi z `metadata.json`, a `--version` nadpisuje ją tylko w kopii stagingowej
+(repozytoryjny `metadata.json` pozostaje bez zmian). Katalog `dist/<wersja>/`
+zawiera trzy pliki:
+
+| Plik | Zawartość |
+|---|---|
+| `spotlight@haniewicz.dev.shell-extension.zip` | rozszerzenie GNOME Shell (kod, `lib/`, schemat GSettings) |
+| `gnome-spotlightd-<wersja>.tar.gz` | `searchd/`, `lib/`, `tools/install-daemon.sh`, `README.md`, `DESIGN.md` |
+| `SHA256SUMS.txt` | sumy SHA-256 obu artefaktów |
+
+Skrypt jest idempotentny (kolejne uruchomienie nadpisuje `dist/<wersja>/`), nie
+dotyka `~/.local` i niczego nie publikuje. Weryfikacja artefaktów:
+
+```bash
+sha256sum -c dist/0.2.0/SHA256SUMS.txt
 ```
 
 ## Skrót
@@ -346,7 +355,9 @@ lib/providers/          # aplikacje, okna, ustawienia, komendy, pliki, kalkulato
                         #       schowek (Shell-local, bez zmian w daemonie)
 lib/ui/                 # modal, wiersz wyniku, podgląd, menu akcji
 tools/deploy.sh
+tools/install.sh           # jedno polecenie: ZIP + daemon + kontrola ACTIVE
 tools/install-daemon.sh    # daemon: systemd --user albo aktywacja D-Bus
+tools/package-release.sh   # dist/<wersja>/: ZIP, tar.gz daemona, SHA256SUMS
 tools/bench-daemon.sh      # 100 wywołań D-Bus stałym klientem gjs
 tools/headless-smoke.sh
 searchd/providers/commands.js  # >, ssh, sys, snip, docker (D-Bus/Subprocess async)
