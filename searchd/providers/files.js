@@ -1,5 +1,6 @@
-// Daemon-side file provider backed by `locate`. The parser is shared with the
-// Shell provider through the PURE lib/files-parse.js module.
+// Daemon-side file provider. Tracker/localsearch is the primary source, with
+// `locate` kept as a fallback for systems without the local index. The parser
+// shared with the Shell provider lives in the PURE lib/files-parse.js module.
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
@@ -7,11 +8,34 @@ import { shortenPath } from '../../lib/format.js';
 import { parseLocateOutput } from '../../lib/files-parse.js';
 import { scoreResult } from '../../lib/ranking.js';
 import { ProviderPriority } from '../../lib/providers/registry.js';
+import {
+  buildSearchQuery,
+  mapRow,
+  sanitizeTerm,
+} from '../../lib/tracker-query.js';
 
 const PROVIDER_ID = 'files';
+const DEFAULT_LIMIT = 8;
+const TRACKER_LIMIT = 8;
+const TRACKER_TIMEOUT_MS = 120;
+const TRACKER_CACHE_TTL_MS = 5 * 1000;
+const TRACKER_CACHE_MAX = 32;
+const TRACKER_BUS_NAME = 'org.freedesktop.Tracker3.Miner.Files';
 const LOCATE_TIMEOUT_MS = 300;
-const DEFAULT_LIMIT = 20;
 const SUBTITLE_LENGTH = 64;
+
+const SOURCE_AUTO = 'auto';
+const SOURCE_TRACKER = 'tracker';
+const SOURCE_LOCATE = 'locate';
+const SOURCES = new Set([SOURCE_AUTO, SOURCE_TRACKER, SOURCE_LOCATE]);
+
+const MIME_ICONS = {
+  image: 'image-x-generic-symbolic',
+  audio: 'audio-x-generic-symbolic',
+  video: 'video-x-generic-symbolic',
+  text: 'text-x-generic-symbolic',
+  font: 'font-x-generic-symbolic',
+};
 
 function basename(path) {
   const value = String(path);
@@ -60,21 +84,64 @@ function homeDirectory() {
   }
 }
 
-export function pathToResult(path, homeDir = homeDirectory(), subtitleLength = SUBTITLE_LENGTH) {
+function guessMime(path) {
+  try {
+    const [contentType] = Gio.content_type_guess(String(path), null);
+    return String(contentType ?? '');
+  } catch {
+    return '';
+  }
+}
+
+function mimeGroup(mime) {
+  const value = String(mime ?? '');
+  const slash = value.indexOf('/');
+  if (slash <= 0)
+    return '';
+  return value.slice(0, slash).toLowerCase();
+}
+
+function iconFor(mime) {
+  const group = mimeGroup(mime);
+  return MIME_ICONS[group] ?? 'text-x-generic-symbolic';
+}
+
+/**
+ * Convert a file path into the result shape consumed by the daemon.
+ *
+ * @param {string} path
+ * @param {string} [homeDir]
+ * @param {number} [subtitleLength]
+ * @param {{name?: string, mime?: string, size?: number|null,
+ *   modified?: (string|number|null), score?: number}} [metadata]
+ * @returns {object}
+ */
+export function pathToResult(
+  path,
+  homeDir = homeDirectory(),
+  subtitleLength = SUBTITLE_LENGTH,
+  metadata = {}
+) {
   const value = String(path);
-  const name = basename(value);
-  const kind = extensionOf(value);
-  const subtitle = shortenPath(value, homeDir, subtitleLength);
+  const info = metadata && typeof metadata === 'object' ? metadata : {};
+  const name = String(info.name || basename(value) || value);
+  const mime = String(info.mime || guessMime(value));
+  const kind = mimeGroup(mime) || extensionOf(value);
+  const shortened = shortenPath(value, homeDir, subtitleLength);
+  const subtitle = mime ? `${shortened} · ${mime}` : shortened;
+  const size = Number.isFinite(Number(info.size)) ? Number(info.size) : null;
+  const modified = info.modified ?? null;
 
   return {
     id: value,
     providerId: PROVIDER_ID,
-    title: name || value,
+    title: name,
     subtitle,
     kind,
-    icon: 'text-x-generic-symbolic',
+    icon: iconFor(mime),
     key: `${name} ${value}`,
     path: value,
+    score: Number.isFinite(Number(info.score)) ? Number(info.score) : 0,
     activation: { type: 'file', path: value },
     actions: {
       primary: {
@@ -84,10 +151,10 @@ export function pathToResult(path, homeDir = homeDirectory(), subtitleLength = S
         path: value,
       },
       secondary: {
-        id: 'copy-path',
-        label: 'Kopiuj ścieżkę',
-        type: 'copy',
-        text: value,
+        id: 'reveal',
+        label: 'Pokaż w plikach',
+        type: 'reveal',
+        path: value,
       },
       menu: [
         {
@@ -114,8 +181,10 @@ export function pathToResult(path, homeDir = homeDirectory(), subtitleLength = S
       path: value,
       rows: [
         ['Ścieżka', value],
-        ['Typ', kind],
+        ['Typ', mime || kind],
         ['Katalog', parentDirectory(value)],
+        ...(size === null ? [] : [['Rozmiar', String(size)]]),
+        ...(modified === null ? [] : [['Zmodyfikowano', String(modified)]]),
       ],
       description: value,
     },
@@ -199,25 +268,402 @@ function spawnLocate(query, limit) {
   });
 }
 
+function normalizeSource(value) {
+  const source = String(value ?? '').trim().toLowerCase();
+  return SOURCES.has(source) ? source : SOURCE_AUTO;
+}
+
+function loadTrackerNamespace() {
+  try {
+    if (typeof imports === 'undefined')
+      return null;
+    return imports.gi?.Tracker ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function cursorValue(cursor, index) {
+  try {
+    const value = cursor.get_string(index);
+    return Array.isArray(value) ? value[0] : value;
+  } catch {
+    try {
+      return cursor.get_integer(index);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function cursorRow(cursor) {
+  const row = {};
+  let columns = 0;
+  try {
+    columns = cursor.get_n_columns();
+  } catch {
+    columns = 0;
+  }
+
+  for (let index = 0; index < columns; index++) {
+    let name = '';
+    try {
+      name = String(cursor.get_variable_name(index) ?? '');
+    } catch {
+      name = '';
+    }
+    const value = cursorValue(cursor, index);
+    row[index] = value;
+    if (name)
+      row[name] = value;
+  }
+
+  return row;
+}
+
+/**
+ * Execute a Tracker query asynchronously. A single GLib timeout cancels the
+ * cancellable after `timeoutMs`, so the daemon main loop is never blocked by
+ * a slow index lookup.
+ *
+ * @param {object} connection
+ * @param {string} sparql
+ * @param {number} limit
+ * @param {number} timeoutMs
+ * @returns {Promise<{rows: object[], timedOut: boolean, error: Error|null}>}
+ */
+function queryTracker(connection, sparql, limit, timeoutMs) {
+  return new Promise(resolve => {
+    let settled = false;
+    let timerId = 0;
+    let cursor = null;
+    let statement = null;
+    const rows = [];
+    const seen = new Set();
+    const cancellable = new Gio.Cancellable();
+
+    const finish = (result) => {
+      if (settled)
+        return;
+      settled = true;
+
+      if (timerId) {
+        try {
+          GLib.source_remove(timerId);
+        } catch {
+          // The timer already fired.
+        }
+        timerId = 0;
+      }
+
+      try {
+        cursor?.close();
+      } catch {
+        // The cursor may already be closed by cancellation.
+      }
+      cursor = null;
+
+      resolve(result);
+    };
+
+    const fail = error => {
+      finish({
+        rows: [],
+        timedOut: false,
+        error: error ?? new Error('tracker query failed'),
+      });
+    };
+
+    function next() {
+      if (settled)
+        return;
+      if (rows.length >= limit) {
+        finish({ rows, timedOut: false, error: null });
+        return;
+      }
+
+      try {
+        cursor.next_async(cancellable, (_source, result) => {
+          if (settled)
+            return;
+
+          let hasNext = false;
+          try {
+            hasNext = cursor.next_finish(result);
+          } catch (error) {
+            fail(error);
+            return;
+          }
+
+          if (!hasNext) {
+            finish({ rows, timedOut: false, error: null });
+            return;
+          }
+
+          try {
+            const mapped = mapRow(cursorRow(cursor));
+            if (mapped.path && !seen.has(mapped.path)) {
+              seen.add(mapped.path);
+              rows.push(mapped);
+            }
+          } catch (error) {
+            fail(error);
+            return;
+          }
+
+          next();
+        });
+      } catch (error) {
+        fail(error);
+      }
+    }
+
+    timerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, timeoutMs, () => {
+      timerId = 0;
+      try {
+        cancellable.cancel();
+      } catch {
+        // Cancellation is best effort.
+      }
+      finish({ rows: [], timedOut: true, error: null });
+      return GLib.SOURCE_REMOVE;
+    });
+
+    try {
+      statement = connection.query_statement(sparql, cancellable);
+      statement.execute_async(cancellable, (_source, result) => {
+        if (settled)
+          return;
+        try {
+          cursor = statement.execute_finish(result);
+        } catch (error) {
+          fail(error);
+          return;
+        }
+        next();
+      });
+    } catch (error) {
+      fail(error);
+    }
+  });
+}
+
 export function createProvider(options = {}) {
+  let trackerConnection = null;
+  let trackerError = null;
+  let stats = {
+    filesSource: 'none',
+    timedOut: false,
+    filesMs: 0,
+  };
+
+  const cache = new Map();
+
+  function getSource() {
+    let envSource = '';
+    try {
+      envSource = String(GLib.getenv('FILES_SOURCE') ?? '');
+    } catch {
+      envSource = '';
+    }
+    if (envSource.trim() !== '')
+      return normalizeSource(envSource);
+
+    let configured = options.filesSource ?? options.source;
+    if (typeof configured === 'function')
+      configured = configured();
+    return normalizeSource(configured);
+  }
+
+  function setStats(source, timedOut, startedAt) {
+    stats = {
+      filesSource: source,
+      timedOut: Boolean(timedOut),
+      filesMs: Math.max(0, Date.now() - startedAt),
+    };
+  }
+
+  function ensureTrackerConnection() {
+    if (trackerConnection)
+      return trackerConnection;
+
+    const Tracker = loadTrackerNamespace();
+    if (!Tracker) {
+      trackerError = new Error('Tracker typelib is not available');
+      return null;
+    }
+
+    try {
+      trackerConnection = Tracker.SparqlConnection.bus_new(
+        TRACKER_BUS_NAME,
+        null,
+        null
+      );
+      trackerError = null;
+      return trackerConnection;
+    } catch (error) {
+      trackerError = error;
+      trackerConnection = null;
+      return null;
+    }
+  }
+
+  function cacheKey(source, needle, limit) {
+    return `${source}\u0000${limit}\u0000${needle.toLowerCase()}`;
+  }
+
+  function cacheGet(key) {
+    const entry = cache.get(key);
+    if (!entry)
+      return null;
+    if (entry.expiresAt <= Date.now()) {
+      cache.delete(key);
+      return null;
+    }
+    return entry;
+  }
+
+  function cacheSet(key, rows, source) {
+    if (cache.size >= TRACKER_CACHE_MAX) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined)
+        cache.delete(oldest);
+    }
+    cache.set(key, {
+      rows,
+      source,
+      expiresAt: Date.now() + TRACKER_CACHE_TTL_MS,
+    });
+  }
+
+  function locateRows(paths) {
+    return paths.map(path => ({
+      path,
+      name: basename(path),
+      mime: '',
+      size: null,
+      modified: null,
+      score: 0,
+    }));
+  }
+
+  function resultRows(rows) {
+    const home = homeDirectory();
+    return rows.map(row =>
+      pathToResult(row.path, home, SUBTITLE_LENGTH, row)
+    );
+  }
+
+  async function searchTracker(needle, limit) {
+    const connection = ensureTrackerConnection();
+    if (!connection)
+      return { rows: [], timedOut: false, error: trackerError };
+
+    const sparql = buildSearchQuery(needle, { limit, contentSearch: true });
+    return queryTracker(connection, sparql, limit, TRACKER_TIMEOUT_MS);
+  }
+
   return {
     id: PROVIDER_ID,
     title: 'Pliki',
     priority: ProviderPriority.NORMAL,
     prefix: 'f ',
-    // Slightly above the locate budget so the provider can degrade to an
-    // empty list itself instead of being cut off by the registry race.
-    timeoutMs: 350,
-    dispose() {},
+    // Leave room for the registry race; the provider degrades to an empty
+    // file section itself at TRACKER_TIMEOUT_MS.
+    timeoutMs: 150,
+    warmUp() {
+      if (getSource() === SOURCE_LOCATE)
+        return;
+
+      const connection = ensureTrackerConnection();
+      if (!connection)
+        return;
+
+      // Warm the FTS index before the daemon owns the bus name. This single
+      // synchronous query runs only at startup, never on a keystroke.
+      try {
+        const sparql = buildSearchQuery('spotlightwarmup', {
+          limit: 1,
+          contentSearch: true,
+        });
+        const statement = connection.query_statement(sparql, null);
+        const cursor = statement.execute(null);
+        try {
+          cursor.next(null);
+        } finally {
+          cursor.close();
+        }
+      } catch {
+        // Warm-up is best effort; the first real query has its own budget.
+      }
+    },
+    getStats() {
+      return { ...stats };
+    },
+    dispose() {
+      cache.clear();
+      const connection = trackerConnection;
+      trackerConnection = null;
+      if (!connection)
+        return;
+      try {
+        connection.close();
+      } catch {
+        // Shutdown is best effort.
+      }
+    },
     async search(query, context = {}) {
-      const needle = String(query ?? '').trim();
+      const startedAt = Date.now();
+      const needle = sanitizeTerm(query);
       if (needle === '' || scoreResult(needle, { title: needle, key: needle }) <= 0)
         return [];
 
-      const limit = resolveLimit(options, context);
-      const paths = await spawnLocate(needle, limit);
-      const homeDir = homeDirectory();
-      return paths.map(path => pathToResult(path, homeDir));
+      const source = getSource();
+      const limit = Math.min(resolveLimit(options, context), TRACKER_LIMIT);
+      if (limit <= 0) {
+        setStats(source === SOURCE_LOCATE ? SOURCE_LOCATE : 'none', false, startedAt);
+        return [];
+      }
+
+      const key = cacheKey(source, needle, limit);
+      const cached = cacheGet(key);
+      if (cached) {
+        setStats(cached.source, false, startedAt);
+        return resultRows(cached.rows);
+      }
+
+      if (source === SOURCE_LOCATE) {
+        const paths = await spawnLocate(needle, limit);
+        const rows = locateRows(paths);
+        setStats(SOURCE_LOCATE, false, startedAt);
+        cacheSet(key, rows, SOURCE_LOCATE);
+        return resultRows(rows);
+      }
+
+      const result = await searchTracker(needle, limit);
+      if (result.timedOut) {
+        setStats(SOURCE_TRACKER, true, startedAt);
+        return [];
+      }
+
+      if (result.error) {
+        if (source === SOURCE_TRACKER) {
+          setStats('none', false, startedAt);
+          return [];
+        }
+
+        // Auto mode falls back to `locate`; a missing mlocate database is an
+        // empty list, not a user-visible error.
+        const paths = await spawnLocate(needle, limit);
+        const rows = locateRows(paths);
+        setStats(SOURCE_LOCATE, false, startedAt);
+        cacheSet(key, rows, SOURCE_LOCATE);
+        return resultRows(rows);
+      }
+
+      setStats(SOURCE_TRACKER, false, startedAt);
+      cacheSet(key, result.rows, SOURCE_TRACKER);
+      return resultRows(result.rows);
     },
   };
 }

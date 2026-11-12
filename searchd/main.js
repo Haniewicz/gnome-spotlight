@@ -33,6 +33,7 @@ const MAX_LIMIT = 100;
 const SCHEMA_ID = 'org.gnome.shell.extensions.spotlight';
 const EXTENSION_UUID = 'spotlight@haniewicz.dev';
 const REMOTE_CACHE_TTL_MS = 5 * 1000;
+const FILES_SOURCE_KEY = 'files-source';
 
 const SEARCH_XML = `
 <node>
@@ -135,6 +136,26 @@ function remoteProvidersEnabled() {
   }
 }
 
+/**
+ * Read the preferred file source. `FILES_SOURCE` in the daemon environment
+ * takes precedence over GSettings inside the provider, which keeps testing
+ * and one-off daemon starts simple.
+ *
+ * @returns {'auto'|'tracker'|'locate'}
+ */
+function filesSourceSetting() {
+  const schema = schemaForSettings();
+  if (!schema)
+    return 'auto';
+  try {
+    const settings = Gio.Settings.new_full(schema, null, null);
+    const value = String(settings.get_string(FILES_SOURCE_KEY) ?? '');
+    return ['auto', 'tracker', 'locate'].includes(value) ? value : 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
 function launchApp(appId, desktopFile) {
   let info = null;
   try {
@@ -218,7 +239,7 @@ function createRegistry() {
     createCommandsProvider(),
     createCalculatorProvider(),
     createSettingsProvider(),
-    createFilesProvider(),
+    createFilesProvider({ filesSource: filesSourceSetting }),
   ])
     registry.register(provider);
 
@@ -253,6 +274,19 @@ function main(argv) {
   }
 
   const registry = createRegistry();
+  let providersDisposed = false;
+  const disposeProviders = () => {
+    if (providersDisposed)
+      return;
+    providersDisposed = true;
+    for (const provider of registry.list()) {
+      try {
+        provider.dispose?.();
+      } catch {
+        // Shutdown is best effort.
+      }
+    }
+  };
 
   // Warm the expensive enumerations before owning the bus name. D-Bus
   // activation then waits for a daemon whose caches are already hot, and the
@@ -272,6 +306,7 @@ function main(argv) {
     connection = Gio.bus_get_sync(Gio.BusType.SESSION, null);
   } catch (error) {
     printerr(`gnome-spotlightd: cannot connect to session bus: ${error.message}`);
+    disposeProviders();
     return 1;
   }
 
@@ -286,6 +321,9 @@ function main(argv) {
     if (shuttingDown)
       return;
     shuttingDown = true;
+
+    // Quit()/signal shutdown must release Tracker before the bus disappears.
+    disposeProviders();
 
     try {
       exportedSearch?.unexport();
@@ -345,6 +383,13 @@ function main(argv) {
       });
 
       const results = response.results.map(resultToVardict);
+      const filesProvider = registry.list().find(provider => provider.id === 'files');
+      let filesStats = {};
+      try {
+        filesStats = filesProvider?.getStats?.() ?? {};
+      } catch {
+        filesStats = {};
+      }
       const stats = {
         total: response.stats.total,
         truncated: response.stats.truncated,
@@ -352,6 +397,7 @@ function main(argv) {
         errors: Array.isArray(response.stats.errors)
           ? response.stats.errors
           : response.errors ?? [],
+        ...filesStats,
       };
       return [results, JSON.stringify(stats)];
     },
@@ -375,6 +421,7 @@ function main(argv) {
     exportedProvider.export(connection, OBJECT_PATH);
   } catch (error) {
     printerr(`gnome-spotlightd: cannot export D-Bus objects: ${error.message}`);
+    disposeProviders();
     return 1;
   }
 
@@ -414,13 +461,7 @@ function main(argv) {
 
   loop.run();
 
-  for (const provider of registry.list()) {
-    try {
-      provider.dispose?.();
-    } catch {
-      // Shutdown is best effort.
-    }
-  }
+  disposeProviders();
 
   return 0;
 }

@@ -15,7 +15,7 @@ const SHORTCUTS = [
 const PROVIDERS = [
   { id: 'apps', label: 'Aplikacje' },
   { id: 'windows', label: 'Okna' },
-  { id: 'files', label: 'Pliki (locate)' },
+  { id: 'files', label: 'Pliki' },
   { id: 'settings', label: 'Ustawienia GNOME' },
   { id: 'commands', label: 'Komendy (prefiks >)' },
   { id: 'calculator', label: 'Kalkulator' },
@@ -27,6 +27,12 @@ const MONITORS = [
   { label: 'Pod kursorem', value: 'pointer' },
   { label: 'Aktywne okno', value: 'focused' },
   { label: 'Główny monitor', value: 'primary' },
+];
+
+const FILE_SOURCES = [
+  { label: 'Automatycznie (Tracker, potem locate)', value: 'auto' },
+  { label: 'Tracker / localsearch', value: 'tracker' },
+  { label: 'locate', value: 'locate' },
 ];
 
 function safeGet(getter, fallback) {
@@ -62,6 +68,12 @@ function shortcutIndex(settings) {
 function monitorIndex(settings) {
   const value = safeGet(() => settings.get_string('open-on-monitor'), 'pointer');
   const index = MONITORS.findIndex(monitor => monitor.value === value);
+  return index >= 0 ? index : 0;
+}
+
+function filesSourceIndex(settings) {
+  const value = safeGet(() => settings.get_string('files-source'), 'auto');
+  const index = FILE_SOURCES.findIndex(source => source.value === value);
   return index >= 0 ? index : 0;
 }
 
@@ -168,6 +180,22 @@ export default class SpotlightPreferences extends ExtensionPreferences {
       });
       providersGroup.add(row);
     }
+
+    const filesSourceRow = new Adw.ComboRow({
+      title: 'Źródło plików',
+      subtitle: 'files-source',
+      model: Gtk.StringList.new(FILE_SOURCES.map(source => source.label)),
+    });
+    filesSourceRow.set_selected(filesSourceIndex(settings));
+    filesSourceRow.connect('notify::selected', () => {
+      if (state.busy)
+        return;
+      const source = FILE_SOURCES[filesSourceRow.get_selected()];
+      if (!source)
+        return;
+      safeSet(() => settings.set_string('files-source', source.value));
+    });
+    providersGroup.add(filesSourceRow);
 
     // Native GNOME applications expose their own SearchProvider2 services.
     // The daemon consumes them into separate remote:<BusName> sections, so

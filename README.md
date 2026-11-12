@@ -1,20 +1,23 @@
 # Spotlight
 
 Launcher w stylu macOS Spotlight dla GNOME Shell (45–51). Jedno pole, wyniki z
-aplikacji, otwartych okien, plików (`locate`), paneli Ustawień GNOME, komend
-powłoki, kalkulatora i historii schowka — z podglądem, menu akcji i frecency.
+aplikacji, otwartych okien, plików (Tracker/localsearch z fallbackiem `locate`),
+paneli Ustawień GNOME, komend powłoki, kalkulatora i historii schowka — z
+podglądem, menu akcji i frecency.
 
 Wizualna referencja: `mockup/launcher.html` oraz `mockup/spotlight-*.png`.
 Specyfikacja: `docs/DESIGN.md`.
 
-Przy `enable()` rozszerzenie asynchronicznie rozgrzewa cache aplikacji, paneli Ustawień i bazy `locate`, dzięki czemu pierwsze wpisanie nie płaci zimnego kosztu providerów.
+Przy `enable()` rozszerzenie asynchronicznie rozgrzewa cache aplikacji, paneli Ustawień i indeksu plików, dzięki czemu pierwsze wpisanie nie płaci zimnego kosztu providerów.
 
 ## Wymagania
 
 - GNOME Shell 45–51 (testowane na 51.1) i gjs 1.90+.
 - `gnome-extensions` (pakiet `gnome-shell`).
-- `locate` (pakiet `mlocate`/`plocate`) dla providera plików — bez niego sekcja
-  plików jest po prostu pusta.
+- Do plików: `localsearch` (Tracker 3.12, usługa `localsearch-3.service`) —
+  zalecane, bo daje wyniki po nazwie i treści. `locate` (pakiet
+  `mlocate`/`plocate`) jest fallbackiem; bez żadnego z nich sekcja plików jest
+  po prostu pusta.
 - Terminal (`gnome-terminal` albo GNOME Console/kgx) dla prefiksu `>`.
 - Do testów: `gjs` i `glib-compile-schemas`; do smoke dodatkowo
   `dbus-run-session` i sesyjny GNOME Shell w trybie headless.
@@ -64,7 +67,7 @@ nie nadpisuje cudzych skrótów.
 | `sys ` | usługi | jednostki `systemctl --user` przez D-Bus (`Manager.ListUnits`, tylko `Loaded`) | start / stop / restart / status; zmiany stanu przez `Manager.<Verb>Unit`, bez powłoki |
 | `snip ` | snippety | `$XDG_CONFIG_HOME/gnome-spotlight/snippets.json` | wstaw tekst do schowka |
 | `docker ` | kontenery | `docker ps --format` albo `podman ps --format`, gdy docker nie jest w `PATH` | otwórz logi, zatrzymaj kontener; bez powłoki, subprocess z timeoutem 300 ms |
-| `f ` | pliki | baza `locate` | otwórz plik, pokaż w folderze, uruchom w terminalu |
+| `f ` | pliki | Tracker/localsearch, fallback `locate` | otwórz plik, pokaż w plikach, kopiuj ścieżkę |
 | `cb ` / `clip…` | schowek | lokalna historia Shella | wstaw z historii, usuń wpis (`Ctrl+Enter`) |
 
 - `>` — komendy powłoki, np. `> systemctl --user restart spotify` (uruchamiane
@@ -182,10 +185,42 @@ systemctl --user restart gnome-spotlightd.service
 # wariant bez systemd: zatrzymaj i uruchom ponownie `gjs -m searchd/main.js`
 ```
 
+## Źródła plików
+
+Daemon pyta najpierw lokalny indeks GNOME (`localsearch` / Tracker 3.12,
+`org.freedesktop.Tracker3.Miner.Files`), dzięki czemu wyniki obejmują nazwy
+plików i — po włączeniu dopasowania treści — także zawartość zaindeksowanych
+dokumentów. Jedno połączenie `SparqlConnection` jest cache'owane w daemonie i
+zamykane przy `Quit()`/`disable`; zapytanie ma budżet 120 ms i jest anulowane
+przez `Gio.Cancellable`, więc nie blokuje pętli głównej.
+
+Kolejność źródeł zależy od klucza GSettings `files-source`:
+
+- `auto` (domyślnie) — Tracker, a gdy usługa lub typelib są niedostępne,
+  fallback do `locate`; pusta baza `mlocate` daje pustą listę, nie błąd UI,
+- `tracker` — tylko Tracker/localsearch,
+- `locate` — tylko `locate`, bez łączenia z Trackerem.
+
+Do testów albo jednorazowego uruchomienia daemona można nadpisać wybór zmienną
+środowiskową `FILES_SOURCE` (`auto`, `tracker` albo `locate`); ma ona
+pierwszeństwo przed GSettings:
+
+```bash
+FILES_SOURCE=locate gjs -m searchd/main.js
+gsettings --schemadir schemas set org.gnome.shell.extensions.spotlight files-source 'locate'
+```
+
+Aktualne źródło ostatniego zapytania widać w `stats` jako `filesSource`
+(`tracker`, `locate` albo `none`) oraz `timedOut`. Wymagany jest pakiet
+`localsearch` z aktywną usługą `localsearch-3.service`; indeks znajduje się w
+`~/.cache/tracker3/files`. Bez `localsearch` provider nadal działa przez
+`locate`, o ile ten jest zainstalowany.
+
 ## Ograniczenia
 
-- Pliki pochodzą z bazy `locate`; rozszerzenie nie buduje własnego indeksu i nie
-  obserwuje zmian w systemie plików.
+- Pliki pochodzą z lokalnego indeksu Tracker/localsearch albo z bazy `locate`;
+  rozszerzenie nie buduje własnego indeksu i nie obserwuje zmian w systemie
+  plików na bieżąco.
 - Brak sieci: kursy walut są tylko z lokalnego cache (`currency-rates`), a ich
   brak oznacza brak wyniku walutowego, nie zmyśloną wartość.
 - Brak telemetrii i plugin API (poza MVP). Historia schowka jest lokalna

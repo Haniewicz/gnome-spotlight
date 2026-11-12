@@ -42,6 +42,7 @@ EXPECTED_KEYS = {
     "usage-history": "s",
     "currency-rates": "s",
     "open-on-monitor": "s",
+    "files-source": "s",
     "remote-providers-enabled": "b",
 }
 
@@ -54,6 +55,7 @@ EXPECTED_DEFAULTS = {
     "usage-history": "'{}'",
     "currency-rates": "'{}'",
     "open-on-monitor": "'pointer'",
+    "files-source": "'auto'",
     "remote-providers-enabled": "true",
 }
 
@@ -68,6 +70,7 @@ PURE_MODULES = [
     "lib/format.js",
     "lib/gtype.js",
     "lib/files-parse.js",
+    "lib/tracker-query.js",
     "lib/preview-model.js",
     "lib/window-actions.js",
     "lib/providers/registry.js",
@@ -96,6 +99,7 @@ REQUIRED_FILES = [
     "lib/format.js",
     "lib/gtype.js",
     "lib/files-parse.js",
+    "lib/tracker-query.js",
     "lib/preview-model.js",
     "lib/window-actions.js",
     "lib/providers/files.js",
@@ -133,6 +137,7 @@ REQUIRED_FILES = [
     "tests/js/searchStream.test.js",
     "tests/headless/perf.js",
     "tests/js/files-parse.test.js",
+    "tests/js/tracker-query.test.js",
     "tests/js/preview-model.test.js",
     "tests/js/window-actions.test.js",
     "tests/js/clipboard-store.test.js",

@@ -51,6 +51,12 @@
       <description>One of pointer, focused or primary.</description>
     </key>
 
+    <key name="files-source" type="s">
+      <default>'auto'</default>
+      <summary>Source of file search results</summary>
+      <description>One of auto, tracker or locate. `auto` uses the local Tracker/localsearch index and falls back to locate when it is unavailable.</description>
+    </key>
+
     <key name="remote-providers-enabled" type="b">
       <default>true</default>
       <summary>Consume GNOME Shell native search providers</summary>
