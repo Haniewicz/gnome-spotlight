@@ -1,5 +1,6 @@
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 
 import { ExtensionPreferences } from 'resource:///org/gnome/shell/extensions/prefs.js';
@@ -71,6 +72,33 @@ function clampResults(value) {
   return Math.max(4, Math.min(12, Math.round(number)));
 }
 
+function clipboardHistoryPath() {
+  try {
+    return GLib.build_filenamev([
+      GLib.get_user_cache_dir(),
+      'gnome-spotlight',
+      'clipboard.json',
+    ]);
+  } catch {
+    return null;
+  }
+}
+
+function clearClipboardHistory() {
+  const path = clipboardHistoryPath();
+  if (!path)
+    return false;
+
+  try {
+    const file = Gio.File.new_for_path(path);
+    if (file.query_exists(null))
+      file.delete(null);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Adwaita preferences window for Spotlight.
  *
@@ -140,6 +168,46 @@ export default class SpotlightPreferences extends ExtensionPreferences {
       });
       providersGroup.add(row);
     }
+
+    const clipboardGroup = new Adw.PreferencesGroup({
+      title: 'Schowek',
+      description: 'Historia ostatnio skopiowanych tekstów jest dostępna po wpisaniu „cb ” lub „clip…”.',
+    });
+    page.add(clipboardGroup);
+
+    const clipboardRow = new Adw.SwitchRow({
+      title: 'Historia schowka',
+      subtitle: 'Zapisuj lokalnie ostatnio skopiowane teksty',
+      active: safeGet(() => settings.get_boolean('clipboard-enabled'), true),
+    });
+    clipboardRow.connect('notify::active', () => {
+      if (state.busy)
+        return;
+      safeSet(() => settings.set_boolean(
+        'clipboard-enabled',
+        clipboardRow.get_active()
+      ));
+    });
+    clipboardGroup.add(clipboardRow);
+
+    const clearRow = new Adw.ActionRow({
+      title: 'Wyczyść historię',
+      subtitle: 'Usuwa zapisane wpisy schowka',
+    });
+    const clearButton = new Gtk.Button({
+      label: 'Wyczyść historię',
+      valign: Gtk.Align.CENTER,
+    });
+    clearButton.connect('clicked', () => {
+      clearRow.set_subtitle(
+        clearClipboardHistory()
+          ? 'Historia schowka została wyczyszczona'
+          : 'Nie udało się wyczyścić historii schowka'
+      );
+    });
+    clearRow.add_suffix(clearButton);
+    clearRow.set_activatable_widget(clearButton);
+    clipboardGroup.add(clearRow);
 
     const resultsGroup = new Adw.PreferencesGroup({
       title: 'Wyniki i wygląd',

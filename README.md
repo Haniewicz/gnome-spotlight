@@ -2,7 +2,7 @@
 
 Launcher w stylu macOS Spotlight dla GNOME Shell (45–51). Jedno pole, wyniki z
 aplikacji, otwartych okien, plików (`locate`), paneli Ustawień GNOME, komend
-powłoki i kalkulatora — z podglądem, menu akcji i frecency.
+powłoki, kalkulatora i historii schowka — z podglądem, menu akcji i frecency.
 
 Wizualna referencja: `mockup/launcher.html` oraz `mockup/spotlight-*.png`.
 Specyfikacja: `docs/DESIGN.md`.
@@ -61,6 +61,10 @@ nie nadpisuje cudzych skrótów.
   w terminalu, nigdy bezpośrednio przez proces Shella).
 - `f ` — zawężenie do plików, np. `f raport 2024`. Spacja po `f` jest częścią
   prefiksu, dzięki czemu zwykłe zapytania typu `firefox` działają normalnie.
+- `cb ` albo `clip…` — historia schowka, np. `cb raport` albo `clip raport`.
+  Wpis pojawia się po otwarciu modala; `Enter` wstawia jego treść z powrotem do
+  schowka, a `Ctrl+Enter` usuwa wpis z historii. Historia jest lokalna dla
+  Shella i zapisywana w `$XDG_CACHE_HOME/gnome-spotlight/clipboard.json`.
 - Bez prefiksu przeszukiwane są wszystkie włączone providery.
 
 ## Klawisze
@@ -83,9 +87,10 @@ zamyka modala.
 ## Preferencje
 
 Okno Adwaita pozwala ustawić skrót, włączać/wyłączać providery, wybrać limit
-wyników (suwak 4–12), przełącznik panelu podglądu oraz monitor otwierania
-(`pointer` / `focused` / `primary`). Wszystkie wartości są zapisywane przez
-`this.getSettings()`; puste lub uszkodzone wartości nie powodują wyjątków.
+wyników (suwak 4–12), przełącznik panelu podglądu, monitor otwierania
+(`pointer` / `focused` / `primary`), a także włączyć historię schowka i
+wyczyścić ją przyciskiem „Wyczyść historię”. Wszystkie wartości są zapisywane
+przez `this.getSettings()`; puste lub uszkodzone wartości nie powodują wyjątków.
 
 ## Ograniczenia
 
@@ -93,8 +98,9 @@ wyników (suwak 4–12), przełącznik panelu podglądu oraz monitor otwierania
   obserwuje zmian w systemie plików.
 - Brak sieci: kursy walut są tylko z lokalnego cache (`currency-rates`), a ich
   brak oznacza brak wyniku walutowego, nie zmyśloną wartość.
-- Brak telemetrii, schowka jako osobnego providera, snippetów i plugin API
-  (poza MVP).
+- Brak telemetrii, snippetów i plugin API (poza MVP). Historia schowka jest
+  lokalna (maks. 100 wpisów / 64 KiB na wpis, TTL 7 dni) i nie jest wysyłana do
+  daemona.
 - Komendy wymagają terminala; bez niego wynik jest widoczny, ale wyszarzony.
 - Panel podglądu pokazuje maksymalnie 6 wierszy metadanych; podgląd tekstu
   pliku jest ograniczony do 200 linii i nie jest edytorem. Obrazy i pierwsze
@@ -121,7 +127,7 @@ rozszerzenie skopiowane do tymczasowego `XDG_DATA_HOME`):
 bash tools/headless-smoke.sh
 ```
 
-Skrypt wypisuje `PASS: modal-open modal-typed modal-esc modal-closed preview-text preview-image` i kończy
+Skrypt wypisuje `PASS: modal-open modal-typed modal-esc modal-closed preview-text preview-image clipboard-item` i kończy
 się kodem 0. Gdy w środowisku brakuje `gnome-shell` albo nie da się ustawić
 `GI_TYPELIB_PATH`, wypisuje `SKIP: <powód>` i kończy się kodem 3. Inne błędy
 Shella oznaczają kod ≠ 0.
@@ -203,10 +209,11 @@ metadata.json
 stylesheet.css
 schemas/                # GSettings
 lib/                    # PURE: ranking, fuzzy, text, calculator, format, usage,
-                        #       searchStream (merge/stabilize/LRU)
+                        #       clipboard-store, searchStream (merge/stabilize/LRU)
 lib/preview-model.js    # PURE: klasyfikacja pliku, metadane, snippet tekstu
 lib/daemonClient.js     # Gio.DBus: probe, Search, NameOwnerChanged, cancel
-lib/providers/          # aplikacje, okna, ustawienia, komendy, pliki, kalkulator
+lib/providers/          # aplikacje, okna, ustawienia, komendy, pliki, kalkulator,
+                        #       schowek (Shell-local, bez zmian w daemonie)
 lib/ui/                 # modal, wiersz wyniku, podgląd, menu akcji
 tools/deploy.sh
 tools/install-daemon.sh    # daemon: systemd --user albo aktywacja D-Bus

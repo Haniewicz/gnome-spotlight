@@ -27,6 +27,12 @@
       <description>Whether the result preview column is rendered.</description>
     </key>
 
+    <key name="clipboard-enabled" type="b">
+      <default>true</default>
+      <summary>Remember clipboard history</summary>
+      <description>Whether the local clipboard history provider is registered and records copied text.</description>
+    </key>
+
     <key name="usage-history" type="s">
       <default>'{}'</default>
       <summary>Usage history</summary>

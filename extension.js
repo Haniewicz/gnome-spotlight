@@ -13,6 +13,7 @@ import { createProvider as createSettingsProvider } from './lib/providers/settin
 import { createProvider as createCommandsProvider } from './lib/providers/commands.js';
 import { createProvider as createFilesProvider } from './lib/providers/files.js';
 import { createProvider as createCalculatorProvider } from './lib/providers/calculator.js';
+import { createProvider as createClipboardProvider } from './lib/providers/clipboard.js';
 import { DaemonClient } from './lib/daemonClient.js';
 import { searchDaemonSources } from './lib/searchStream.js';
 
@@ -27,6 +28,7 @@ const PROVIDER_FACTORIES = {
   commands: createCommandsProvider,
   files: createFilesProvider,
   calculator: createCalculatorProvider,
+  clipboard: createClipboardProvider,
 };
 
 export default class SpotlightExtension extends Extension {
@@ -38,6 +40,7 @@ export default class SpotlightExtension extends Extension {
     this._usageStore = null;
     this._usageSaveId = 0;
     this._providersChangedId = 0;
+    this._clipboardChangedId = 0;
     this._maxResultsChangedId = 0;
     this._maxResults = 8;
     this._enabled = false;
@@ -70,6 +73,11 @@ export default class SpotlightExtension extends Extension {
 
     this._providersChangedId = this._settings.connect(
       'changed::enabled-providers',
+      () => this._syncProviders()
+    );
+
+    this._clipboardChangedId = this._settings.connect(
+      'changed::clipboard-enabled',
       () => this._syncProviders()
     );
 
@@ -170,6 +178,13 @@ export default class SpotlightExtension extends Extension {
       : this._maxResults;
     const mode = typeof options?.mode === 'string' ? options.mode : '';
 
+    // Clipboard history is Shell-local and must also work while the daemon is
+    // the active source. Handling it before the daemon/offline branch also
+    // keeps results in lastUsed order instead of the shared frecency ranking.
+    const clipboardResponse = await this._searchClipboard(query, limit);
+    if (clipboardResponse)
+      return clipboardResponse;
+
     if (this._source !== 'daemon' || !this._daemonClient) {
       const response = await this._registry.search(query, { limit });
       return {
@@ -217,6 +232,67 @@ export default class SpotlightExtension extends Extension {
     };
   }
 
+  _getProvider(id) {
+    if (!this._registry || typeof this._registry.list !== 'function')
+      return null;
+    return this._registry.list().find(provider => provider.id === id) ?? null;
+  }
+
+  /**
+   * `cb …` / `clip…` is answered directly by the local clipboard provider:
+   * it bypasses the daemon and the shared ranking so history stays ordered by
+   * lastUsed. An inactive query returns null and follows the normal path.
+   */
+  async _searchClipboard(query, limit) {
+    const provider = this._getProvider('clipboard');
+    if (!provider ||
+        typeof provider.isQueryActive !== 'function' ||
+        !provider.isQueryActive(query))
+      return null;
+
+    let results = [];
+    try {
+      results = await provider.search(query, { limit });
+    } catch (error) {
+      logError(error);
+    }
+
+    if (!Array.isArray(results))
+      results = [];
+
+    return {
+      results: results.slice(0, limit),
+      stats: {
+        total: results.length,
+        truncated: results.length > limit,
+        ms: {},
+      },
+      source: 'offline',
+    };
+  }
+
+  _captureClipboard() {
+    const provider = this._getProvider('clipboard');
+    if (!provider || typeof provider.capture !== 'function')
+      return;
+
+    try {
+      const pending = provider.capture();
+      if (pending && typeof pending.catch === 'function')
+        pending.catch(error => logError(error));
+    } catch (error) {
+      logError(error);
+    }
+  }
+
+  _readClipboardEnabled() {
+    try {
+      return this._settings?.get_boolean('clipboard-enabled') !== false;
+    } catch {
+      return true;
+    }
+  }
+
   /**
    * Only the Shell-local windows provider participates in the daemon path.
    * No apps/settings/files enumeration or file-index lookup per keystroke.
@@ -225,8 +301,7 @@ export default class SpotlightExtension extends Extension {
     if (!this._registry)
       return Promise.resolve([]);
 
-    const provider = this._registry.list()
-      .find(candidate => candidate.id === 'windows');
+    const provider = this._getProvider('windows');
     if (!provider || typeof provider.search !== 'function')
       return Promise.resolve([]);
 
@@ -314,6 +389,13 @@ export default class SpotlightExtension extends Extension {
     }
 
     const wanted = new Set(Array.isArray(enabled) ? enabled : []);
+    // Clipboard history has its own GSettings switch instead of being part of
+    // enabled-providers: turning it off unregisters the provider entirely.
+    if (this._readClipboardEnabled())
+      wanted.add('clipboard');
+    else
+      wanted.delete('clipboard');
+
     for (const provider of this._registry.list()) {
       if (wanted.has(provider.id))
         continue;
@@ -457,8 +539,15 @@ export default class SpotlightExtension extends Extension {
   }
 
   _toggle() {
-    if (this._modal)
-      this._modal.toggle();
+    if (!this._modal)
+      return;
+
+    // Read the clipboard exactly once, on the closed -> open transition.
+    // Ctrl+C/Ctrl+X inside the modal never goes through this path.
+    if (!this._modal.isOpen)
+      this._captureClipboard();
+
+    this._modal.toggle();
   }
 
   disable() {
@@ -491,6 +580,15 @@ export default class SpotlightExtension extends Extension {
         logError(error);
       }
       this._providersChangedId = 0;
+    }
+
+    if (this._clipboardChangedId && this._settings) {
+      try {
+        this._settings.disconnect(this._clipboardChangedId);
+      } catch (error) {
+        logError(error);
+      }
+      this._clipboardChangedId = 0;
     }
 
     if (this._maxResultsChangedId && this._settings) {

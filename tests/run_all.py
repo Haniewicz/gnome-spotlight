@@ -38,6 +38,7 @@ EXPECTED_KEYS = {
     "enabled-providers": "as",
     "max-results": "i",
     "preview-enabled": "b",
+    "clipboard-enabled": "b",
     "usage-history": "s",
     "currency-rates": "s",
     "open-on-monitor": "s",
@@ -48,6 +49,7 @@ EXPECTED_DEFAULTS = {
     "enabled-providers": "['apps','windows','files','settings','commands','calculator']",
     "max-results": "8",
     "preview-enabled": "true",
+    "clipboard-enabled": "true",
     "usage-history": "'{}'",
     "currency-rates": "'{}'",
     "open-on-monitor": "'pointer'",
@@ -66,6 +68,7 @@ PURE_MODULES = [
     "lib/files-parse.js",
     "lib/preview-model.js",
     "lib/providers/registry.js",
+    "lib/clipboard-store.js",
     "lib/searchStream.js",
     "searchd/registry.js",
     "searchd/serialize.js",
@@ -89,6 +92,7 @@ REQUIRED_FILES = [
     "lib/preview-model.js",
     "lib/providers/files.js",
     "lib/providers/calculator.js",
+    "lib/providers/clipboard.js",
     "lib/daemonClient.js",
     "lib/searchStream.js",
     "lib/ui/modal.js",
@@ -111,6 +115,7 @@ REQUIRED_FILES = [
     "tests/headless/perf.js",
     "tests/js/files-parse.test.js",
     "tests/js/preview-model.test.js",
+    "tests/js/clipboard-store.test.js",
     "tests/run_all.py",
 ]
 
@@ -348,7 +353,7 @@ def check_schema() -> None:
         fail(f"glib-compile-schemas --strict --dry-run failed (rc={result.returncode}): {output}")
         return
 
-    ok("GSettings schema: 7 keys/types/defaults and strict dry-run compile")
+    ok(f"GSettings schema: {len(EXPECTED_KEYS)} keys/types/defaults and strict dry-run compile")
 
 
 def check_pure_modules() -> None:

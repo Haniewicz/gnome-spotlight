@@ -1,5 +1,6 @@
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
+import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { ExtensionState } from 'resource:///org/gnome/shell/misc/extensionUtils.js';
@@ -13,6 +14,7 @@ const MARKERS = [
   'modal-closed',
   'preview-text',
   'preview-image',
+  'clipboard-item',
 ];
 
 // 3x2 PNG (red/green top row, blue/white bottom row). Keeping the bytes in
@@ -108,11 +110,41 @@ export async function run() {
     );
 
     step = 'modal-open';
+    const clipboardText = `smoke-schowek-${Date.now()}`;
+    St.Clipboard.get_default().set_text(
+      St.ClipboardType.CLIPBOARD,
+      clipboardText
+    );
     extension.stateObj._toggle();
     const modal = extension.stateObj._modal;
     assert(modal, step, 'modal was not created');
     assert(modal.isOpen === true, step, 'keybinding handler did not open the modal');
     assert(modal.visible === true, step, 'modal is not visible');
+
+    step = 'clipboard-item';
+    modal._entry.set_text('cb ');
+    const clipboardRow = await waitFor(
+      () => modal._rows.find(row =>
+        row.result?.providerId === 'clipboard' &&
+        String(row.result?.title ?? '').includes(clipboardText)
+      ),
+      'clipboard history row'
+    );
+    assert(clipboardRow, step, 'clipboard row was not rendered');
+    assert(
+      String(clipboardRow.result?.title ?? '').includes(clipboardText),
+      step,
+      'clipboard row does not contain the text set in St.Clipboard'
+    );
+
+    const clipboardEscape = pressEscape(modal);
+    assert(clipboardEscape === Clutter.EVENT_STOP, step, 'Escape was not consumed');
+    assert(modal.isOpen === false, step, 'modal is still open after clipboard check');
+    assert(modal.visible === false, step, 'modal is still visible after clipboard check');
+
+    // Reopen for the remaining modal and preview checks.
+    extension.stateObj._toggle();
+    assert(modal.isOpen === true, step, 'modal did not reopen after clipboard check');
 
     step = 'modal-typed';
     modal._entry.set_text('spo');
