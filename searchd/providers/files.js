@@ -13,6 +13,7 @@ import {
   mapRow,
   sanitizeTerm,
 } from '../../lib/tracker-query.js';
+import { createPathIndexer } from '../path-indexer.js';
 
 const PROVIDER_ID = 'files';
 const DEFAULT_LIMIT = 8;
@@ -22,7 +23,20 @@ const TRACKER_LIMIT = 8;
 // Fetch a wider candidate window, score it with the shared path ranking and
 // only then apply the public limit below.
 const TRACKER_CANDIDATE_LIMIT = 64;
+// The own path index is a supplement, not a replacement. Fetch a slightly
+// wider window than the public limit, merge it with Tracker by path and let
+// the shared ranking decide which rows survive.
+const PATH_CANDIDATE_LIMIT = 64;
+// The first `files` query may spend a little longer while the in-memory path
+// index is still being filled. 120 ms keeps it inside the extension's 150 ms
+// daemon budget as well as the explicitly allowed 300 ms first-query budget.
+const PATH_FIRST_WAIT_MS = 120;
+const PATH_WEIGHT_BONUS = 50;
 const TRACKER_TIMEOUT_MS = 120;
+// The registry races each provider independently. The files provider's first
+// query is allowed 300 ms; later queries finish with the cached path index
+// immediately and stay well below the 30 ms benchmark threshold.
+const FILES_PROVIDER_TIMEOUT_MS = 300;
 const TRACKER_CACHE_TTL_MS = 5 * 1000;
 const TRACKER_CACHE_MAX = 32;
 const TRACKER_BUS_NAME = 'org.freedesktop.Tracker3.Miner.Files';
@@ -131,7 +145,8 @@ export function pathToResult(
   const info = metadata && typeof metadata === 'object' ? metadata : {};
   const name = String(info.name || basename(value) || value);
   const mime = String(info.mime || guessMime(value));
-  const kind = mimeGroup(mime) || extensionOf(value);
+  const directory = info.isDirectory === true || info.isDir === true;
+  const kind = directory ? 'Katalog' : (mimeGroup(mime) || extensionOf(value));
   const shortened = shortenPath(value, homeDir, subtitleLength);
   const subtitle = mime ? `${shortened} · ${mime}` : shortened;
   const size = Number.isFinite(Number(info.size)) ? Number(info.size) : null;
@@ -143,7 +158,7 @@ export function pathToResult(
     title: name,
     subtitle,
     kind,
-    icon: iconFor(mime),
+    icon: directory ? 'folder-symbolic' : iconFor(mime),
     key: `${name} ${value}`,
     path: value,
     score: Number.isFinite(Number(info.score)) ? Number(info.score) : 0,
@@ -456,6 +471,10 @@ function queryTracker(connection, sparql, limit, timeoutMs) {
 export function createProvider(options = {}) {
   let trackerConnection = null;
   let trackerError = null;
+  let pathIndexer = null;
+  let pathIndexError = null;
+  let ownsPathIndexer = false;
+  let firstPathQuery = true;
   let stats = {
     filesSource: 'none',
     timedOut: false,
@@ -463,6 +482,36 @@ export function createProvider(options = {}) {
   };
 
   const cache = new Map();
+
+  function ensurePathIndexer() {
+    if (pathIndexer || pathIndexError)
+      return pathIndexer;
+
+    if (Object.prototype.hasOwnProperty.call(options, 'pathIndexer') &&
+        (options.pathIndexer === false || options.pathIndexer === null))
+      return null;
+
+    if (options.pathIndexer &&
+        (typeof options.pathIndexer.search === 'function' ||
+         typeof options.pathIndexer.searchAsync === 'function')) {
+      pathIndexer = options.pathIndexer;
+      return pathIndexer;
+    }
+
+    try {
+      pathIndexer = createPathIndexer({
+        settings: options.settings ?? null,
+        roots: options.indexRoots,
+        maxEntries: options.maxEntries,
+        cachePath: options.cachePath,
+      });
+      ownsPathIndexer = true;
+    } catch (error) {
+      pathIndexError = error;
+      pathIndexer = null;
+    }
+    return pathIndexer;
+  }
 
   function getSource() {
     let envSource = '';
@@ -513,8 +562,24 @@ export function createProvider(options = {}) {
     }
   }
 
+  function pathRevision() {
+    if (!pathIndexer)
+      return 'none';
+    try {
+      if (pathIndexer.revision !== undefined)
+        return String(pathIndexer.revision);
+      return `${pathIndexer.size}:${pathIndexer.isBuilding ? 1 : 0}`;
+    } catch {
+      return 'error';
+    }
+  }
+
   function cacheKey(source, needle, limit) {
-    return `${source}\u0000${limit}\u0000${needle.toLowerCase()}`;
+    // The path index grows while it is built. Including its revision keeps a
+    // tracker-only answer from the first warm-up query out of the way once the
+    // project files have been indexed (and when the scan finishes).
+    return `${source}\u0000${limit}\u0000${needle.toLowerCase()}\u0000` +
+      pathRevision();
   }
 
   function cacheGet(key) {
@@ -556,10 +621,12 @@ export function createProvider(options = {}) {
     const home = homeDirectory();
     const scored = rows.map(row => {
       const baseScore = Number(row.score);
+      const pathWeight = Number(row.pathWeight);
       return {
         row,
         score: (Number.isFinite(baseScore) ? baseScore : 0) +
-          scorePathMatch(needle, { path: row.path, homeDir: home }),
+          scorePathMatch(needle, { path: row.path, homeDir: home }) +
+          (Number.isFinite(pathWeight) ? pathWeight * PATH_WEIGHT_BONUS : 0),
       };
     });
 
@@ -597,14 +664,94 @@ export function createProvider(options = {}) {
     return queryTracker(connection, sparql, candidates, TRACKER_TIMEOUT_MS);
   }
 
+  function pathEntryRow(entry) {
+    const path = String(entry?.path ?? '');
+    if (path === '')
+      return null;
+    return {
+      path,
+      name: String(entry.name || basename(path)),
+      mime: '',
+      size: entry.size ?? null,
+      modified: entry.modified ?? null,
+      score: 0,
+      pathWeight: Number(entry.score) || 0,
+      isDirectory: entry.isDirectory === true || entry.isDir === true,
+      fromPath: true,
+    };
+  }
+
+  async function searchPath(needle, limit) {
+    const indexer = ensurePathIndexer();
+    if (!indexer)
+      return { rows: [], available: false };
+
+    const candidates = Math.max(limit, PATH_CANDIDATE_LIMIT);
+    const waitMs = firstPathQuery ? PATH_FIRST_WAIT_MS : 0;
+    firstPathQuery = false;
+
+    try {
+      const found = typeof indexer.searchAsync === 'function'
+        ? await indexer.searchAsync(needle, candidates, waitMs)
+        : await indexer.search(needle, candidates);
+      const rows = (Array.isArray(found) ? found : [])
+        .map(pathEntryRow)
+        .filter(Boolean);
+      return { rows, available: true };
+    } catch (error) {
+      pathIndexError = error;
+      return { rows: [], available: false };
+    }
+  }
+
+  function mergeRows(trackerRows, pathRows) {
+    const byPath = new Map();
+
+    for (const row of Array.isArray(trackerRows) ? trackerRows : []) {
+      const path = String(row?.path ?? '');
+      if (path === '')
+        continue;
+      byPath.set(path, { ...row, pathWeight: 0 });
+    }
+
+    for (const row of Array.isArray(pathRows) ? pathRows : []) {
+      const path = String(row?.path ?? '');
+      if (path === '')
+        continue;
+      const existing = byPath.get(path);
+      if (existing) {
+        existing.score = Math.max(
+          Number(existing.score) || 0,
+          Number(row.score) || 0
+        );
+        existing.pathWeight = Math.max(
+          Number(existing.pathWeight) || 0,
+          Number(row.pathWeight) || 0
+        );
+        existing.isDirectory = existing.isDirectory === true ||
+          row.isDirectory === true;
+        existing.fromPath = true;
+      } else {
+        byPath.set(path, { ...row });
+      }
+    }
+
+    return [...byPath.values()];
+  }
+
+  // Loading the cached snapshot is deliberate: it happens once when the
+  // daemon starts, while the actual directory walk still waits for the first
+  // `files` query.
+  ensurePathIndexer();
+
   return {
     id: PROVIDER_ID,
     title: 'Pliki',
     priority: ProviderPriority.NORMAL,
     prefix: 'f ',
-    // Leave room for the registry race; the provider degrades to an empty
-    // file section itself at TRACKER_TIMEOUT_MS.
-    timeoutMs: 150,
+    // A fresh index gets one bounded head start (PATH_FIRST_WAIT_MS); after that
+    // every query is in-memory and Tracker keeps its own 120 ms budget.
+    timeoutMs: FILES_PROVIDER_TIMEOUT_MS,
     warmUp() {
       if (getSource() === SOURCE_LOCATE)
         return;
@@ -636,6 +783,14 @@ export function createProvider(options = {}) {
     },
     dispose() {
       cache.clear();
+      if (ownsPathIndexer) {
+        try {
+          pathIndexer?.dispose?.();
+        } catch {
+          // Path index shutdown is best effort.
+        }
+      }
+      pathIndexer = null;
       const connection = trackerConnection;
       trackerConnection = null;
       if (!connection)
@@ -659,8 +814,10 @@ export function createProvider(options = {}) {
         return [];
       }
 
+      const usePath = source === SOURCE_AUTO;
+      const pathBuilding = usePath && pathIndexer?.isBuilding === true;
       const key = cacheKey(source, needle, limit);
-      const cached = cacheGet(key);
+      const cached = pathBuilding ? null : cacheGet(key);
       if (cached) {
         setStats(cached.source, false, startedAt);
         return resultRows(cached.rows, needle, limit);
@@ -674,7 +831,34 @@ export function createProvider(options = {}) {
         return resultRows(rows, needle, limit);
       }
 
-      const result = await searchTracker(needle, limit);
+      // Tracker and the own path index are asked in parallel. The path index
+      // is a supplement: it covers git repositories and other trees that
+      // Tracker's content filter refuses to index.
+      const pathPromise = usePath
+        ? searchPath(needle, limit)
+        : Promise.resolve({ rows: [], available: false });
+      const [result, pathResult] = await Promise.all([
+        searchTracker(needle, limit),
+        pathPromise,
+      ]);
+
+      const trackerAnswered = !result.timedOut && !result.error;
+      const pathAnswered = pathResult.available && pathResult.rows.length > 0;
+
+      if (trackerAnswered) {
+        const rows = mergeRows(result.rows, pathResult.rows);
+        const filesSource = pathAnswered ? 'tracker+path' : SOURCE_TRACKER;
+        setStats(filesSource, false, startedAt);
+        cacheSet(key, rows, filesSource);
+        return resultRows(rows, needle, limit);
+      }
+
+      if (pathAnswered) {
+        setStats('path', Boolean(result.timedOut), startedAt);
+        cacheSet(key, pathResult.rows, 'path');
+        return resultRows(pathResult.rows, needle, limit);
+      }
+
       if (result.timedOut) {
         setStats(SOURCE_TRACKER, true, startedAt);
         return [];

@@ -43,6 +43,8 @@ EXPECTED_KEYS = {
     "currency-rates": "s",
     "open-on-monitor": "s",
     "files-source": "s",
+    "extra-index-roots": "as",
+    "path-index-max-entries": "i",
     "remote-providers-enabled": "b",
 }
 
@@ -56,6 +58,8 @@ EXPECTED_DEFAULTS = {
     "currency-rates": "'{}'",
     "open-on-monitor": "'pointer'",
     "files-source": "'auto'",
+    "extra-index-roots": "['$HOME/Projects', '$HOME/Dokumenty']",
+    "path-index-max-entries": "200000",
     "remote-providers-enabled": "true",
 }
 
@@ -73,6 +77,7 @@ PURE_MODULES = [
     "lib/tracker-query.js",
     "lib/preview-model.js",
     "lib/window-actions.js",
+    "lib/path-index.js",
     "lib/providers/registry.js",
     "lib/clipboard-store.js",
     "lib/searchStream.js",
@@ -102,6 +107,7 @@ REQUIRED_FILES = [
     "lib/tracker-query.js",
     "lib/preview-model.js",
     "lib/window-actions.js",
+    "lib/path-index.js",
     "lib/providers/files.js",
     "lib/providers/calculator.js",
     "lib/providers/clipboard.js",
@@ -111,6 +117,7 @@ REQUIRED_FILES = [
     "lib/ui/preview.js",
     "lib/ui/resultRow.js",
     "searchd/main.js",
+    "searchd/path-indexer.js",
     "searchd/registry.js",
     "searchd/searchProvider2.js",
     "searchd/providers/apps.js",
@@ -142,6 +149,7 @@ REQUIRED_FILES = [
     "tests/js/window-actions.test.js",
     "tests/js/clipboard-store.test.js",
     "tests/js/ranking-path.test.js",
+    "tests/js/path-index.test.js",
     "tools/package-release.sh",
     "tools/install.sh",
     "tests/run_all.py",

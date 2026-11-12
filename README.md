@@ -1,9 +1,9 @@
 # Spotlight
 
 Launcher w stylu macOS Spotlight dla GNOME Shell (45–51). Jedno pole, wyniki z
-aplikacji, otwartych okien, plików (Tracker/localsearch z fallbackiem `locate`),
-paneli Ustawień GNOME, komend powłoki, kalkulatora i historii schowka — z
-podglądem, menu akcji i frecency.
+aplikacji, otwartych okien, plików (Tracker/localsearch, własny indeks ścieżek
+projektów i fallback `locate`), paneli Ustawień GNOME, komend powłoki,
+kalkulatora i historii schowka — z podglądem, menu akcji i frecency.
 
 Wizualna referencja: `mockup/launcher.html` oraz `mockup/spotlight-*.png`.
 Specyfikacja: `docs/DESIGN.md`.
@@ -152,7 +152,10 @@ fallbackiem, więc rozszerzenia nie muszą być włączane razem.
 Okno Adwaita pozwala ustawić skrót, włączać/wyłączać providery, wybrać limit
 wyników (suwak 4–12), przełącznik panelu podglądu, monitor otwierania
 (`pointer` / `focused` / `primary`), a także włączyć historię schowka i
-wyczyścić ją przyciskiem „Wyczyść historię”. Wszystkie wartości są zapisywane
+wyczyścić ją przyciskiem „Wyczyść historię”. Osobna sekcja „Indeks ścieżek”
+pozwala edytować listę korzeni (`extra-index-roots`, np. `$HOME/Projects,
+$HOME/Dokumenty`) i ustawić maksimum wpisów suwakiem 50 000–500 000
+(`path-index-max-entries`, domyślnie 200 000). Wszystkie wartości są zapisywane
 przez `this.getSettings()`; puste lub uszkodzone wartości nie powodują wyjątków.
 
 ## Natywne providery GNOME
@@ -196,18 +199,48 @@ systemctl --user restart gnome-spotlightd.service
 
 ## Źródła plików
 
-Daemon pyta najpierw lokalny indeks GNOME (`localsearch` / Tracker 3.12,
-`org.freedesktop.Tracker3.Miner.Files`), dzięki czemu wyniki obejmują nazwy
-plików i — po włączeniu dopasowania treści — także zawartość zaindeksowanych
-dokumentów. Jedno połączenie `SparqlConnection` jest cache'owane w daemonie i
-zamykane przy `Quit()`/`disable`; zapytanie ma budżet 120 ms i jest anulowane
-przez `Gio.Cancellable`, więc nie blokuje pętli głównej.
+Daemon pyta lokalny indeks GNOME (`localsearch` / Tracker 3.12,
+`org.freedesktop.Tracker3.Miner.Files`) **oraz własny indeks ścieżek**.
+Tracker odpowiada za nazwy i zawartość dokumentów poza repozytoriami. Nie
+indeksuje jednak wnętrza repozytoriów git: filtr zawartości odrzuca katalog
+nadrzędny, więc `docs/DESIGN.md` w `~/Projects/...` nigdy nie trafia do jego
+wyników. Widać to wprost:
+
+```bash
+/usr/libexec/localsearch-3 -e ~/Projects/Gnome-Spotlight/docs/DESIGN.md
+# Katalog nadrzędny „…/Gnome-Spotlight" NIE nadaje się do indeksowania
+```
+
+### Własny indeks ścieżek
+
+Dlatego daemon utrzymuje tani indeks samych ścieżek dla katalogów projektu.
+Ranking łączy oba źródła po ścieżce (`id`), a wpisy z własnego indeksu dostają
+wagę dopasowania basename/ścieżki z `lib/path-index.js`; ostateczną kolejność
+wyznacza `lib/ranking.js`. Indeks nie czyta zawartości plików — indeksuje
+nazwy, więc jest uzupełnieniem, nie zamiennikiem Trackera.
+
+Korzenie indeksu pochodzą z GSettings `extra-index-roots` (`$HOME` rozwija
+daemon). Domyślnie są to `~/Projects` i `~/Dokumenty`; gdy lista jest
+domyślna, a `~/Projekty` istnieje, daemon dokłada także ten katalog. Możesz
+dodać np. `~/Pobrane` albo `~/Obrazy`. Pusta lista wyłącza własny indeks.
+Limit wpisów to `path-index-max-entries` (domyślnie 200 000, suwak w
+preferencjach 50 000–500 000); nadmiar jest przycinany od najstarszych wpisów.
+
+Indeksowanie startuje dopiero przy pierwszym zapytaniu trybu `files`, nie przy
+starcie daemona. Katalogi są enumerowane asynchronicznie partiami po 500
+wpisów na turę pętli, z budżetem 20 s na korzeń, więc duże drzewo nie blokuje
+D-Bus. Pomijane są `.git`, `node_modules`, `.venv`, `dist`, `build`, `.cache`
+oraz pliki większe niż 5 MB. Snapshot jest zapisywany z debounce 5 s do
+`$XDG_CACHE_HOME/gnome-spotlight/pathindex.json` i wczytywany przy starcie.
+`Gio.FileMonitor` obserwuje korzenie i ich podkatalogi (nigdy całego `$HOME`),
+więc nowe i usunięte pliki są uwzględniane bez ponownego skanowania.
 
 Kolejność źródeł zależy od klucza GSettings `files-source`:
 
-- `auto` (domyślnie) — Tracker, a gdy usługa lub typelib są niedostępne,
+- `auto` (domyślnie) — Tracker **i** indeks ścieżek równolegle, scalane po
+  ścieżce; gdy Tracker jest niedostępny, zostaje indeks ścieżek, a potem
   fallback do `locate`; pusta baza `mlocate` daje pustą listę, nie błąd UI,
-- `tracker` — tylko Tracker/localsearch,
+- `tracker` — tylko Tracker/localsearch (bez własnego indeksu),
 - `locate` — tylko `locate`, bez łączenia z Trackerem.
 
 Do testów albo jednorazowego uruchomienia daemona można nadpisać wybór zmienną
@@ -219,17 +252,25 @@ FILES_SOURCE=locate gjs -m searchd/main.js
 gsettings --schemadir schemas set org.gnome.shell.extensions.spotlight files-source 'locate'
 ```
 
-Aktualne źródło ostatniego zapytania widać w `stats` jako `filesSource`
-(`tracker`, `locate` albo `none`) oraz `timedOut`. Wymagany jest pakiet
-`localsearch` z aktywną usługą `localsearch-3.service`; indeks znajduje się w
-`~/.cache/tracker3/files`. Bez `localsearch` provider nadal działa przez
-`locate`, o ile ten jest zainstalowany.
+Aktualne źródło ostatniego zapytania widać w `stats` jako `filesSource`:
+`tracker+path` (oba źródła coś zwróciły), `path` (tylko własny indeks),
+`tracker` (tylko Tracker, np. plik spoza korzeni) albo `none`. Do tego
+dochodzą `timedOut` i `filesMs`. Wymagany jest pakiet `localsearch` z aktywną
+usługą `localsearch-3.service`; jego indeks znajduje się w
+`~/.cache/tracker3/files`. Bez `localsearch` własny indeks nadal działa, a
+`locate` jest ostatecznym fallbackiem, o ile jest zainstalowany.
+
+Pierwsze zapytanie `files` może mieć osobny budżet do 300 ms (krótki start
+skanowania + Tracker); kolejne korzystają już z pamięci i mieszczą się w progu
+benchmarku. Skanowanie trwa w tle nawet po zwróceniu pierwszych wyników.
 
 ## Ograniczenia
 
-- Pliki pochodzą z lokalnego indeksu Tracker/localsearch albo z bazy `locate`;
-  rozszerzenie nie buduje własnego indeksu i nie obserwuje zmian w systemie
-  plików na bieżąco.
+- Pliki pochodzą z Trackera, własnego indeksu ścieżek albo bazy `locate`.
+  Własny indeks obejmuje tylko skonfigurowane korzenie (`extra-index-roots`),
+  dopasowuje nazwy/ścieżki (nie zawartość) i jest aktualizowany monitorami
+  działającymi w trakcie życia daemona; po restarcie startuje ze snapshotu, a
+  zmiany powstałe przy wyłączonym daemonie uzupełnia pierwszy pełny skan.
 - Brak sieci: kursy walut są tylko z lokalnego cache (`currency-rates`), a ich
   brak oznacza brak wyniku walutowego, nie zmyśloną wartość.
 - Brak telemetrii i plugin API (poza MVP). Historia schowka jest lokalna
@@ -350,6 +391,7 @@ lib/ssh-config.js       # PURE: parser ~/.ssh/config (alias, host, user, port)
 lib/snippets.js         # PURE: tolerancyjny parser snippets.json
 lib/systemd-units.js    # PURE: ranking jednostek + argv systemctl --user
 lib/preview-model.js    # PURE: klasyfikacja pliku, metadane, snippet tekstu
+lib/path-index.js       # PURE: indeks ścieżek, dopasowanie i serializacja
 lib/daemonClient.js     # Gio.DBus: probe, Search, NameOwnerChanged, cancel
 lib/providers/          # aplikacje, okna, ustawienia, komendy, pliki, kalkulator,
                         #       schowek (Shell-local, bez zmian w daemonie)
@@ -360,6 +402,7 @@ tools/install-daemon.sh    # daemon: systemd --user albo aktywacja D-Bus
 tools/package-release.sh   # dist/<wersja>/: ZIP, tar.gz daemona, SHA256SUMS
 tools/bench-daemon.sh      # 100 wywołań D-Bus stałym klientem gjs
 tools/headless-smoke.sh
+searchd/path-indexer.js        # async skan korzeni + FileMonitor + snapshot
 searchd/providers/commands.js  # >, ssh, sys, snip, docker (D-Bus/Subprocess async)
 tools/headless-perf.sh
 tests/run_all.py

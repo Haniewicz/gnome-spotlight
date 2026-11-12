@@ -156,6 +156,24 @@ function filesSourceSetting() {
   }
 }
 
+/**
+ * The path index reads its root list and entry cap from the same schema. A
+ * missing schema (daemon started straight from the repository) is fine: the
+ * indexer falls back to ~/Projects and ~/Dokumenty.
+ *
+ * @returns {Gio.Settings|null}
+ */
+function schemaSettings() {
+  const schema = schemaForSettings();
+  if (!schema)
+    return null;
+  try {
+    return Gio.Settings.new_full(schema, null, null);
+  } catch {
+    return null;
+  }
+}
+
 function launchApp(appId, desktopFile) {
   let info = null;
   try {
@@ -234,12 +252,13 @@ function activateResult(result) {
 
 function createRegistry() {
   const registry = new DaemonRegistry({ activate: activateResult });
+  const settings = schemaSettings();
   for (const provider of [
     createAppsProvider(),
     createCommandsProvider(),
     createCalculatorProvider(),
     createSettingsProvider(),
-    createFilesProvider({ filesSource: filesSourceSetting }),
+    createFilesProvider({ filesSource: filesSourceSetting, settings }),
   ])
     registry.register(provider);
 

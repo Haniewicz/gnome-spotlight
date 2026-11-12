@@ -54,7 +54,19 @@
     <key name="files-source" type="s">
       <default>'auto'</default>
       <summary>Source of file search results</summary>
-      <description>One of auto, tracker or locate. `auto` uses the local Tracker/localsearch index and falls back to locate when it is unavailable.</description>
+      <description>One of auto, tracker or locate. `auto` queries the local Tracker/localsearch index together with the daemon path index (for git repositories Tracker ignores) and falls back to locate when neither is available.</description>
+    </key>
+
+    <key name="extra-index-roots" type="as">
+      <default>['$HOME/Projects', '$HOME/Dokumenty']</default>
+      <summary>Additional roots for the daemon path index</summary>
+      <description>Directories scanned by gnome-spotlightd's own path index. `$HOME` is expanded by the daemon. Tracker ignores git repositories, so these roots supplement its results.</description>
+    </key>
+
+    <key name="path-index-max-entries" type="i">
+      <default>200000</default>
+      <summary>Maximum number of path index entries</summary>
+      <description>Hard cap for the daemon path index. The preferences slider exposes 50000-500000 entries; the daemon falls back to 200000 when the key is missing.</description>
     </key>
 
     <key name="remote-providers-enabled" type="b">

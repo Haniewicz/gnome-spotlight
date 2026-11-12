@@ -30,10 +30,15 @@ const MONITORS = [
 ];
 
 const FILE_SOURCES = [
-  { label: 'Automatycznie (Tracker, potem locate)', value: 'auto' },
+  { label: 'Automatycznie (Tracker + indeks ścieżek, potem locate)', value: 'auto' },
   { label: 'Tracker / localsearch', value: 'tracker' },
   { label: 'locate', value: 'locate' },
 ];
+
+const DEFAULT_INDEX_ROOTS = ['$HOME/Projects', '$HOME/Dokumenty'];
+const INDEX_ENTRIES_MIN = 50000;
+const INDEX_ENTRIES_MAX = 500000;
+const INDEX_ENTRIES_DEFAULT = 200000;
 
 function safeGet(getter, fallback) {
   try {
@@ -82,6 +87,39 @@ function clampResults(value) {
   if (!Number.isFinite(number))
     return 8;
   return Math.max(4, Math.min(12, Math.round(number)));
+}
+
+function extraIndexRoots(settings) {
+  const raw = safeGet(
+    () => settings.get_strv('extra-index-roots'),
+    DEFAULT_INDEX_ROOTS
+  );
+  return Array.isArray(raw)
+    ? raw.map(value => String(value).trim()).filter(Boolean)
+    : DEFAULT_INDEX_ROOTS.slice();
+}
+
+function parseIndexRoots(text) {
+  const roots = [];
+  const seen = new Set();
+  for (const raw of String(text ?? '').split(/[\n,;]+/)) {
+    const value = raw.trim();
+    if (value === '' || seen.has(value))
+      continue;
+    seen.add(value);
+    roots.push(value);
+  }
+  return roots;
+}
+
+function clampIndexEntries(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number))
+    return INDEX_ENTRIES_DEFAULT;
+  return Math.max(
+    INDEX_ENTRIES_MIN,
+    Math.min(INDEX_ENTRIES_MAX, Math.round(number))
+  );
 }
 
 function clipboardHistoryPath() {
@@ -217,6 +255,68 @@ export default class SpotlightPreferences extends ExtensionPreferences {
       ));
     });
     providersGroup.add(remoteRow);
+
+    // Tracker refuses to index the inside of git repositories, so the daemon
+    // keeps its own cheap path index for project folders. These two settings
+    // control that index without touching Tracker/localsearch.
+    const pathIndexGroup = new Adw.PreferencesGroup({
+      title: 'Indeks ścieżek',
+      description: 'Uzupełnia Tracker w katalogach projektów (Tracker pomija wnętrza repozytoriów git).',
+    });
+    page.add(pathIndexGroup);
+
+    const rootRow = new Adw.EntryRow({
+      title: 'Dodatkowe katalogi (oddzielone przecinkiem)',
+      text: extraIndexRoots(settings).join(', '),
+    });
+    rootRow.connect('changed', () => {
+      if (state.busy)
+        return;
+      const roots = parseIndexRoots(rootRow.get_text());
+      safeSet(() => settings.set_strv(
+        'extra-index-roots',
+        roots.length > 0 ? roots : []
+      ));
+    });
+    pathIndexGroup.add(rootRow);
+
+    const indexEntriesRow = new Adw.ActionRow({
+      title: 'Maks. wpisów indeksu',
+      subtitle: 'Zakres 50 000–500 000; domyślnie 200 000',
+    });
+    const indexAdjustment = new Gtk.Adjustment({
+      lower: INDEX_ENTRIES_MIN,
+      upper: INDEX_ENTRIES_MAX,
+      step_increment: 10000,
+      page_increment: 50000,
+      value: clampIndexEntries(
+        safeGet(
+          () => settings.get_int('path-index-max-entries'),
+          INDEX_ENTRIES_DEFAULT
+        )
+      ),
+    });
+    const indexScale = new Gtk.Scale({
+      orientation: Gtk.Orientation.HORIZONTAL,
+      adjustment: indexAdjustment,
+      digits: 0,
+      draw_value: true,
+      value_pos: Gtk.PositionType.RIGHT,
+      hexpand: true,
+      width_request: 220,
+      valign: Gtk.Align.CENTER,
+    });
+    indexScale.connect('value-changed', () => {
+      if (state.busy)
+        return;
+      safeSet(() => settings.set_int(
+        'path-index-max-entries',
+        clampIndexEntries(indexScale.get_value())
+      ));
+    });
+    indexEntriesRow.add_suffix(indexScale);
+    indexEntriesRow.set_activatable_widget(indexScale);
+    pathIndexGroup.add(indexEntriesRow);
 
     const clipboardGroup = new Adw.PreferencesGroup({
       title: 'Schowek',
