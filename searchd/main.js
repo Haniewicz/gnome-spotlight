@@ -45,6 +45,10 @@ const SEARCH_XML = `
       <arg type="aa{sv}" name="results" direction="out"/>
       <arg type="s" name="stats" direction="out"/>
     </method>
+    <method name="Activate">
+      <arg type="s" name="id" direction="in"/>
+      <arg type="b" name="activated" direction="out"/>
+    </method>
     <method name="Quit"/>
     <property name="Version" type="s" access="read"/>
   </interface>
@@ -377,6 +381,8 @@ function main(argv) {
       system.exit(code);
   };
 
+  const providerImpl = new SearchProvider2(registry, { limit: DEFAULT_LIMIT });
+
   const searchImpl = {
     Version: VERSION,
     async Search(query, mode, limit) {
@@ -420,6 +426,39 @@ function main(argv) {
       };
       return [results, JSON.stringify(stats)];
     },
+    /**
+     * Activate a native SearchProvider2 result on behalf of the Shell client.
+     * App and file results are intentionally handled in the Shell (they need
+     * Shell.AppSystem / Gio.AppInfo); only remote results cross the daemon.
+     *
+     * @param {string} id
+     * @returns {boolean}
+     */
+    Activate(id) {
+      const key = String(id ?? '');
+      let result = null;
+      try {
+        result = registry.getResult?.(key) ?? null;
+      } catch {
+        result = null;
+      }
+
+      const providerId = String(result?.providerId ?? '');
+      const isRemote = providerId === 'remote' ||
+        providerId.startsWith('remote:') ||
+        result?.activation?.type === 'remote' ||
+        key.startsWith('remote:');
+      if (!isRemote)
+        return false;
+
+      try {
+        providerImpl.ActivateResult(key, [], 0);
+        return true;
+      } catch (error) {
+        printerr(`gnome-spotlightd: Activate(${key}) failed: ${error.message}`);
+        return false;
+      }
+    },
     Quit() {
       GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
         shutdown(0);
@@ -427,8 +466,6 @@ function main(argv) {
       });
     },
   };
-
-  const providerImpl = new SearchProvider2(registry, { limit: DEFAULT_LIMIT });
 
   try {
     exportedSearch = Gio.DBusExportedObject.wrapJSObject(SEARCH_XML, searchImpl);

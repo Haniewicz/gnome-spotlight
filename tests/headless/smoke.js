@@ -18,6 +18,7 @@ const MARKERS = [
   'preview-text',
   'preview-image',
   'clipboard-item',
+  'activate-copy',
 ];
 
 // 3x2 PNG (red/green top row, blue/white bottom row). Keeping the bytes in
@@ -43,6 +44,49 @@ function sleep(milliseconds) {
       return GLib.SOURCE_REMOVE;
     });
   });
+}
+
+function readClipboardText() {
+  return new Promise(resolve => {
+    let clipboard = null;
+    try {
+      clipboard = St.Clipboard.get_default();
+    } catch {
+      resolve('');
+      return;
+    }
+
+    const type = St.ClipboardType.CLIPBOARD;
+    if (clipboard.get_text.length < 2) {
+      try {
+        resolve(String(clipboard.get_text(type) ?? ''));
+      } catch {
+        resolve('');
+      }
+      return;
+    }
+
+    try {
+      clipboard.get_text(type, (first, second) => {
+        if (typeof second === 'string')
+          resolve(second);
+        else
+          resolve(typeof first === 'string' ? first : '');
+      });
+    } catch {
+      resolve('');
+    }
+  });
+}
+
+async function waitForClipboard(expected, description, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await readClipboardText() === expected)
+      return;
+    await sleep(50);
+  }
+  throw new Error(`timeout waiting for ${description}`);
 }
 
 async function waitFor(predicate, description, timeoutMs = 10000) {
@@ -290,6 +334,42 @@ export async function run() {
     assert(result === Clutter.EVENT_STOP, step, 'Escape was not consumed by the modal');
     assert(modal.isOpen === false, step, 'modal is still open after Escape');
     assert(modal.visible === false, step, 'modal is still visible after Escape');
+
+    step = 'activate-copy';
+    extension.stateObj._toggle();
+    assert(modal.isOpen === true, step, 'modal did not reopen for the activation check');
+    modal._cancelSearch();
+    const copyResult = {
+      id: 'smoke-copy',
+      providerId: 'smoke',
+      title: 'SMOKE-42',
+      subtitle: 'akcja deklaratywna',
+      kind: 'Test',
+      icon: 'edit-copy-symbolic',
+      // The daemon sends actions as a JSON string; use the same shape so the
+      // smoke exercises parseActions + runAction, not a local callback.
+      actions: JSON.stringify({
+        primary: {
+          id: 'copy-smoke',
+          label: 'Kopiuj',
+          type: 'copy',
+          text: 'SMOKE-42',
+        },
+        secondary: null,
+        menu: [],
+      }),
+    };
+    modal.setResults([{ id: 'smoke', title: 'Smoke', results: [copyResult] }]);
+    assert(modal._selectedResult() === copyResult, step, 'copy result is not selected');
+
+    const copyEnter = modal._onCapturedEvent(modal, {
+      type: () => Clutter.EventType.KEY_PRESS,
+      get_key_symbol: () => Clutter.KEY_Return,
+      get_state: () => 0,
+    });
+    assert(copyEnter === Clutter.EVENT_STOP, step, 'Enter was not consumed');
+    await waitForClipboard('SMOKE-42', 'clipboard to contain SMOKE-42');
+    assert(modal.isOpen === false, step, 'modal is still open after activation');
 
     step = 'modal-closed';
     Main.extensionManager.disableExtension(COEXIST_UUID);

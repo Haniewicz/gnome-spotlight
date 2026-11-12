@@ -124,6 +124,18 @@ Menu akcji zawiera tylko akcje możliwe do wykonania; np. „Uruchom w terminalu
 jest wyszarzone, gdy nie ma zainstalowanego terminala. Zamknięcie menu nie
 zamyka modala.
 
+### Akcje z daemona
+
+Wyniki z `gnome-spotlightd` niosą akcje jako opis JSON (`app`, `file`,
+`settings`, `copy`, `command`, `systemd`, `reveal`, `docker-stop`, `remote`).
+`lib/action-runner.js` zamienia ten opis na efekt w Shellu; `Enter` i kliknięcie
+wiersza przechodzą przez tę samą ścieżkę (`_activateResult()`). Akcje `remote`
+są przekazywane do daemona metodą `Activate(id)` na
+`org.gnome.Spotlight.Search`, która wywołuje `SearchProvider2.ActivateResult`
+u natywnego providera. Wyniki `app`/`file` są obsługiwane lokalnie przez Shell
+(`Shell.AppSystem` i `Gio.AppInfo`), więc nie wymagają uruchamiania aplikacji
+przez daemona.
+
 ### Akcje okien
 
 Na wynikach providera `windows` (okno aplikacji z listy otwartych okien) menu
@@ -303,11 +315,11 @@ bash tools/headless-smoke.sh
 ```
 
 Skrypt wypisuje `PASS: window-actions modal-open modal-typed modal-esc
-modal-closed preview-text preview-image clipboard-item` i kończy się kodem 0
-(zachowana jest też starsza linia bez `window-actions` dla dotychczasowych
-wrapperów). Gdy w środowisku brakuje `gnome-shell` albo nie da się ustawić
-`GI_TYPELIB_PATH`, wypisuje `SKIP: <powód>` i kończy się kodem 3. Inne błędy
-Shella oznaczają kod ≠ 0.
+modal-closed preview-text preview-image clipboard-item activate-copy` i kończy
+się kodem 0 (zachowana jest też starsza linia bez `window-actions` dla
+dotychczasowych wrapperów). Gdy w środowisku brakuje `gnome-shell` albo nie da
+się ustawić `GI_TYPELIB_PATH`, wypisuje `SKIP: <powód>` i kończy się kodem 3.
+Inne błędy Shella oznaczają kod ≠ 0.
 
 Bramka wydajnościowa frontendu (ten sam izolowany, headless Shell):
 
@@ -393,6 +405,7 @@ lib/systemd-units.js    # PURE: ranking jednostek + argv systemctl --user
 lib/preview-model.js    # PURE: klasyfikacja pliku, metadane, snippet tekstu
 lib/path-index.js       # PURE: indeks ścieżek, dopasowanie i serializacja
 lib/daemonClient.js     # Gio.DBus: probe, Search, NameOwnerChanged, cancel
+lib/action-runner.js    # wykonanie akcji deklaratywnych z daemona (parse/run)
 lib/providers/          # aplikacje, okna, ustawienia, komendy, pliki, kalkulator,
                         #       schowek (Shell-local, bez zmian w daemonie)
 lib/ui/                 # modal, wiersz wyniku, podgląd, menu akcji
