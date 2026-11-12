@@ -51,5 +51,11 @@
       <description>One of pointer, focused or primary.</description>
     </key>
 
+    <key name="remote-providers-enabled" type="b">
+      <default>true</default>
+      <summary>Consume GNOME Shell native search providers</summary>
+      <description>Query org.gnome.Shell.SearchProvider2 services discovered in the gnome-shell/search-providers directories (Settings, Calculator, Nautilus, Contacts, ...).</description>
+    </key>
+
   </schema>
 </schemalist>

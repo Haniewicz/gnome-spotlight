@@ -13,6 +13,11 @@ const DEFAULT_MODE = '';
 const DEFAULT_LIMIT = 8;
 const DEFAULT_PROVIDER_TIMEOUT_MS = 300;
 
+// GSettings switch read by the daemon entry point. Native SearchProvider2
+// services are consumed by the `remote` provider only when this is true.
+export const REMOTE_PROVIDERS_KEY = 'remote-providers-enabled';
+export const REMOTE_PROVIDER_ID = 'remote';
+
 const MODE_PREFIXES = {
   commands: '>',
   files: 'f ',
@@ -198,10 +203,41 @@ export class DaemonRegistry extends ProviderRegistry {
     for (const [providerId, value] of Object.entries(response.timings ?? {}))
       ms[providerId] = Number.isFinite(Number(value)) ? Number(value) : 0;
 
+    // Providers such as `remote` fan out to several native D-Bus services and
+    // keep their own per-service failures. Surface those next to the registry
+    // level errors so callers can see which native application failed without
+    // losing the healthy providers' results.
+    const errors = Array.isArray(response.errors) ? response.errors.slice() : [];
+    const errorKeys = new Set(
+      errors.map(entry => `${entry?.providerId ?? ''}\u0000${entry?.reason ?? ''}`)
+    );
+    const activeProviders = new Set(Object.keys(response.timings ?? {}));
+    for (const provider of this._providers) {
+      if (!activeProviders.has(provider.id) ||
+          typeof provider.getErrors !== 'function')
+        continue;
+      let providerErrors = [];
+      try {
+        providerErrors = provider.getErrors();
+      } catch {
+        providerErrors = [];
+      }
+      if (!Array.isArray(providerErrors))
+        continue;
+      for (const entry of providerErrors) {
+        const key = `${entry?.providerId ?? ''}\u0000${entry?.reason ?? ''}`;
+        if (errorKeys.has(key))
+          continue;
+        errorKeys.add(key);
+        errors.push(entry);
+      }
+    }
+
     const stats = {
       total: response.totalMatched,
       truncated: response.truncated,
       ms,
+      errors,
     };
 
     this._remember(response.results);

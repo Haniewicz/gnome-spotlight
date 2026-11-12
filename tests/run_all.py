@@ -42,6 +42,7 @@ EXPECTED_KEYS = {
     "usage-history": "s",
     "currency-rates": "s",
     "open-on-monitor": "s",
+    "remote-providers-enabled": "b",
 }
 
 EXPECTED_DEFAULTS = {
@@ -53,6 +54,7 @@ EXPECTED_DEFAULTS = {
     "usage-history": "'{}'",
     "currency-rates": "'{}'",
     "open-on-monitor": "'pointer'",
+    "remote-providers-enabled": "true",
 }
 
 # These modules are PURE by DESIGN §3: they must never import the shell or GI.
@@ -70,6 +72,7 @@ PURE_MODULES = [
     "lib/providers/registry.js",
     "lib/clipboard-store.js",
     "lib/searchStream.js",
+    "lib/search-providers-ini.js",
     "searchd/registry.js",
     "searchd/serialize.js",
     "searchd/providers/commands.js",
@@ -106,6 +109,9 @@ REQUIRED_FILES = [
     "searchd/providers/files.js",
     "searchd/providers/commands.js",
     "searchd/providers/calculator.js",
+    "searchd/providers/remote.js",
+    "lib/search-providers-ini.js",
+    "tests/js/search-providers-ini.test.js",
     "tools/install-daemon.sh",
     "tools/bench-daemon.sh",
     "tools/headless-perf.sh",

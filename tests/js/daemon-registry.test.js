@@ -308,6 +308,80 @@ test('usageMap still boosts results inside one priority', async () => {
   assertDeepEqual(response.results.map(result => result.id), ['b', 'a']);
 });
 
+test('fake remote timeout is isolated and counted in stats.ms', async () => {
+  const registry = new DaemonRegistry();
+  registry.register(makeProvider('remote', 20, [], {
+    timeoutMs: 20,
+    search: () => new Promise(() => {}),
+  }));
+  registry.register(makeProvider('apps', 0, [
+    makeResult('apps', 'spotify', 'Spotify'),
+  ], { timeoutMs: 100 }));
+
+  const started = Date.now();
+  const response = await registry.search('spot', { limit: 8 });
+  const elapsed = Date.now() - started;
+
+  assertLess(elapsed, 120, `remote timeout took ${elapsed} ms`);
+  assertEqual(response.results.length, 1);
+  assertEqual(response.results[0].providerId, 'apps');
+  assertTrue(Number.isFinite(response.stats.ms.remote));
+  assertTrue(response.stats.errors.some(entry =>
+    entry.providerId === 'remote' && entry.reason === 'timeout'));
+});
+
+test('fake remote reports native errors in stats without losing results', async () => {
+  const registry = new DaemonRegistry();
+  registry.register(makeProvider('remote', 20, [
+    makeResult('remote:org.gnome.Settings', 'org.gnome.Settings:network',
+      'Sieć', { kind: 'Natywne' }),
+  ], {
+    getErrors: () => [{
+      providerId: 'remote:org.gnome.Weather.BackgroundService',
+      busName: 'org.gnome.Weather.BackgroundService',
+      stage: 'initial',
+      reason: 'timeout',
+      message: 'timed out',
+    }],
+  }));
+
+  const response = await registry.search('siec', { limit: 8 });
+
+  assertEqual(response.results.length, 1);
+  assertEqual(response.results[0].provider, undefined);
+  assertEqual(response.results[0].providerId, 'remote:org.gnome.Settings');
+  assertEqual(response.results[0].kind, 'Natywne');
+  assertTrue(response.stats.errors.some(entry =>
+    entry.busName === 'org.gnome.Weather.BackgroundService' &&
+    entry.reason === 'timeout'));
+});
+
+test('fake remote duplicate ids are collapsed and the total limit is 8', async () => {
+  const registry = new DaemonRegistry();
+  const rows = [
+    makeResult('remote:org.gnome.Software', 'org.gnome.Software:same',
+      'Display 1', { kind: 'Natywne' }),
+    makeResult('remote:org.gnome.Software', 'org.gnome.Software:same',
+      'Display 2', { kind: 'Natywne' }),
+  ];
+  for (let index = 0; index < 12; index++) {
+    rows.push(makeResult('remote:org.gnome.Software',
+      `org.gnome.Software:display-${index}`, `Display ${index}`, {
+        kind: 'Natywne',
+      }));
+  }
+  registry.register(makeProvider('remote', 20, rows));
+
+  const response = await registry.search('display', { limit: 8 });
+
+  assertEqual(response.results.length, 8);
+  assertEqual(
+    response.results.filter(result =>
+      result.id === 'org.gnome.Software:same').length,
+    1
+  );
+});
+
 for (const entry of cases) {
   try {
     await entry.fn();

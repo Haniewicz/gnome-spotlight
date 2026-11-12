@@ -9,7 +9,7 @@ import GLib from 'gi://GLib';
 import GLibUnix from 'gi://GLibUnix';
 import system from 'system';
 
-import { DaemonRegistry } from './registry.js';
+import { DaemonRegistry, REMOTE_PROVIDERS_KEY } from './registry.js';
 import { SearchProvider2, SEARCH_PROVIDER_XML } from './searchProvider2.js';
 import {
   iconToString,
@@ -22,6 +22,7 @@ import { createProvider as createSettingsProvider } from './providers/settings.j
 import { createProvider as createFilesProvider } from './providers/files.js';
 import { createProvider as createCommandsProvider } from './providers/commands.js';
 import { createProvider as createCalculatorProvider } from './providers/calculator.js';
+import { createProvider as createRemoteProvider } from './providers/remote.js';
 
 const VERSION = '1.0.0';
 const BUS_NAME = 'org.gnome.Spotlight';
@@ -29,6 +30,9 @@ const OBJECT_PATH = '/org/gnome/Spotlight/Search';
 const SEARCH_INTERFACE = 'org.gnome.Spotlight.Search';
 const DEFAULT_LIMIT = 8;
 const MAX_LIMIT = 100;
+const SCHEMA_ID = 'org.gnome.shell.extensions.spotlight';
+const EXTENSION_UUID = 'spotlight@haniewicz.dev';
+const REMOTE_CACHE_TTL_MS = 5 * 1000;
 
 const SEARCH_XML = `
 <node>
@@ -81,6 +85,56 @@ function normalizeMode(mode) {
   return String(mode ?? '').trim().toLowerCase();
 }
 
+function schemaForSettings() {
+  try {
+    const source = Gio.SettingsSchemaSource.get_default();
+    const schema = source?.lookup(SCHEMA_ID, true);
+    if (schema)
+      return schema;
+  } catch {
+    // Fall through to the extension-local schema.
+  }
+
+  // Extension schemas are installed inside the extension directory, not in
+  // the default GSettings source. Look there so the preferences switch also
+  // controls the daemon when the extension is deployed normally.
+  try {
+    const extensionSchemas = GLib.build_filenamev([
+      GLib.get_user_data_dir(),
+      'gnome-shell',
+      'extensions',
+      EXTENSION_UUID,
+      'schemas',
+    ]);
+    const source = Gio.SettingsSchemaSource.new_from_directory(
+      extensionSchemas,
+      Gio.SettingsSchemaSource.get_default(),
+      false
+    );
+    return source?.lookup(SCHEMA_ID, true) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the daemon-side switch. Missing schema (for example a daemon started
+ * straight from the repository) keeps the native providers enabled.
+ *
+ * @returns {boolean}
+ */
+function remoteProvidersEnabled() {
+  const schema = schemaForSettings();
+  if (!schema)
+    return true;
+  try {
+    const settings = Gio.Settings.new_full(schema, null, null);
+    return settings.get_boolean(REMOTE_PROVIDERS_KEY) !== false;
+  } catch {
+    return true;
+  }
+}
+
 function launchApp(appId, desktopFile) {
   let info = null;
   try {
@@ -117,6 +171,8 @@ function openPath(path) {
   }
 }
 
+let activeRemoteProvider = null;
+
 /**
  * Execute the side effect described by a result. Commands are intentionally
  * not spawned here: the extension client owns terminal launching.
@@ -135,6 +191,21 @@ function activateResult(result) {
   case 'copy':
     // Clipboard belongs to the Shell client.
     return true;
+  case 'remote': {
+    if (!activeRemoteProvider)
+      return false;
+    const remoteId = activation.remoteId
+      ? `${activation.busName}:${activation.remoteId}`
+      : String(result?.id ?? '');
+    activeRemoteProvider.activate(
+      remoteId,
+      Array.isArray(activation.terms) ? activation.terms : undefined,
+      0
+    ).catch(error => {
+      printerr(`gnome-spotlightd: remote activation failed: ${error.message}`);
+    });
+    return true;
+  }
   default:
     return false;
   }
@@ -150,6 +221,19 @@ function createRegistry() {
     createFilesProvider(),
   ])
     registry.register(provider);
+
+  activeRemoteProvider = null;
+  if (remoteProvidersEnabled()) {
+    try {
+      activeRemoteProvider = createRemoteProvider({
+        cacheTtlMs: REMOTE_CACHE_TTL_MS,
+      });
+      registry.register(activeRemoteProvider);
+    } catch (error) {
+      printerr(`gnome-spotlightd: remote providers disabled: ${error.message}`);
+      activeRemoteProvider = null;
+    }
+  }
   return registry;
 }
 
@@ -264,6 +348,9 @@ function main(argv) {
         total: response.stats.total,
         truncated: response.stats.truncated,
         ms: response.stats.ms,
+        errors: Array.isArray(response.stats.errors)
+          ? response.stats.errors
+          : response.errors ?? [],
       };
       return [results, JSON.stringify(stats)];
     },

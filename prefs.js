@@ -169,6 +169,27 @@ export default class SpotlightPreferences extends ExtensionPreferences {
       providersGroup.add(row);
     }
 
+    // Native GNOME applications expose their own SearchProvider2 services.
+    // The daemon consumes them into separate remote:<BusName> sections, so
+    // this switch is independent of enabled-providers.
+    const remoteRow = new Adw.SwitchRow({
+      title: 'Wyniki z natywnych aplikacji (Ustawienia, Kalkulator…)',
+      subtitle: 'remote-providers-enabled',
+      active: safeGet(
+        () => settings.get_boolean('remote-providers-enabled'),
+        true
+      ),
+    });
+    remoteRow.connect('notify::active', () => {
+      if (state.busy)
+        return;
+      safeSet(() => settings.set_boolean(
+        'remote-providers-enabled',
+        remoteRow.get_active()
+      ));
+    });
+    providersGroup.add(remoteRow);
+
     const clipboardGroup = new Adw.PreferencesGroup({
       title: 'Schowek',
       description: 'Historia ostatnio skopiowanych tekstów jest dostępna po wpisaniu „cb ” lub „clip…”.',

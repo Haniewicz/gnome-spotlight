@@ -92,6 +92,38 @@ wyników (suwak 4–12), przełącznik panelu podglądu, monitor otwierania
 wyczyścić ją przyciskiem „Wyczyść historię”. Wszystkie wartości są zapisywane
 przez `this.getSettings()`; puste lub uszkodzone wartości nie powodują wyjątków.
 
+## Natywne providery GNOME
+
+Daemon konsumuje aplikacje, które same rejestrują się jako
+`org.gnome.Shell.SearchProvider2`. Deskryptory są czytane przy starcie z:
+
+- `~/.local/share/gnome-shell/search-providers/*.ini` (użytkownika),
+- `/usr/share/gnome-shell/search-providers/*.ini` (systemowe).
+
+Wyniki trafiają do osobnych sekcji `remote:<BusName>` (np.
+`remote:org.gnome.Settings.SearchProvider`, `remote:org.gnome.Calculator.SearchProvider`)
+z rodzajem `Natywne`. Każde wywołanie `GetInitialResultSet` i
+`GetResultMetas` ma budżet 150 ms; błąd albo timeout jednego providera nie
+usuwa wyników pozostałych. Własny bus name `org.gnome.Spotlight` jest pomijany,
+podobnie jak deskryptory bez `BusName`/`ObjectPath`.
+
+Lista znalezionych plików bez uruchamiania daemona:
+
+```bash
+ls ~/.local/share/gnome-shell/search-providers/*.ini \
+   /usr/share/gnome-shell/search-providers/*.ini 2>/dev/null
+```
+
+Aby wyłączyć konsumowanie natywnych aplikacji, użyj przełącznika
+„Wyniki z natywnych aplikacji (Ustawienia, Kalkulator…)” w preferencjach
+(klucz GSettings `remote-providers-enabled`, domyślnie `true`). Zmiana jest
+czytana przy starcie daemona; po przełączeniu uruchom go ponownie:
+
+```bash
+systemctl --user restart gnome-spotlightd.service
+# wariant bez systemd: zatrzymaj i uruchom ponownie `gjs -m searchd/main.js`
+```
+
 ## Ograniczenia
 
 - Pliki pochodzą z bazy `locate`; rozszerzenie nie buduje własnego indeksu i nie
