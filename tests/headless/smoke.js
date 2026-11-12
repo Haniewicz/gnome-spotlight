@@ -1,14 +1,22 @@
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { ExtensionState } from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 
+import { parseActions } from '../../lib/action-runner.js';
+import { normalizeDaemonResult } from '../../lib/daemonClient.js';
+import { normalizeResultActions } from '../../lib/searchStream.js';
 import { planTile } from '../../lib/window-actions.js';
 
 const UUID = 'spotlight@haniewicz.dev';
 const COEXIST_UUID = `${UUID}-coexist`;
+const DAEMON_BUS_NAME = 'org.gnome.Spotlight';
+const DAEMON_OBJECT_PATH = '/org/gnome/Spotlight/Search';
+const DAEMON_SEARCH_INTERFACE = 'org.gnome.Spotlight.Search';
+const DAEMON_SEARCH_REPLY = '(aa{sv}s)';
 const MARKERS = [
   'window-actions',
   'modal-open',
@@ -19,7 +27,10 @@ const MARKERS = [
   'preview-image',
   'clipboard-item',
   'activate-copy',
+  'activate-dbus',
 ];
+
+let daemonProcess = null;
 
 // 3x2 PNG (red/green top row, blue/white bottom row). Keeping the bytes in
 // the script avoids a binary fixture and makes the image preview smoke
@@ -100,6 +111,147 @@ async function waitFor(predicate, description, timeoutMs = 10000) {
   throw new Error(`timeout waiting for ${description}`);
 }
 
+function dbusCall(busName, objectPath, interfaceName, name, parameters,
+  replyType = null, timeoutMs = 2000) {
+  return new Promise((resolve, reject) => {
+    let connection = null;
+    try {
+      connection = Gio.DBus.session;
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    connection.call(
+      busName,
+      objectPath,
+      interfaceName,
+      name,
+      parameters,
+      replyType ? new GLib.VariantType(replyType) : null,
+      Gio.DBusCallFlags.NONE,
+      timeoutMs,
+      null,
+      (source, result) => {
+        try {
+          resolve(source.call_finish(result));
+        } catch (error) {
+          reject(error);
+        }
+      }
+    );
+  });
+}
+
+async function daemonOwnsBus() {
+  try {
+    const reply = await dbusCall(
+      'org.freedesktop.DBus',
+      '/org/freedesktop/DBus',
+      'org.freedesktop.DBus',
+      'NameHasOwner',
+      new GLib.Variant('(s)', [DAEMON_BUS_NAME]),
+      '(b)',
+      1000
+    );
+    return Boolean(reply.deep_unpack()[0]);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The smoke session is a private dbus-run-session, so a daemon started outside
+ * it cannot answer. Start gnome-spotlightd from the repository when the name
+ * is unowned; the second smoke variant is skipped if that is not possible.
+ */
+async function ensureDaemon() {
+  if (await daemonOwnsBus())
+    return true;
+
+  const gjs = GLib.find_program_in_path('gjs');
+  if (!gjs)
+    return false;
+
+  const smokePath = GLib.filename_from_uri(import.meta.url)[0];
+  const root = GLib.path_get_dirname(
+    GLib.path_get_dirname(GLib.path_get_dirname(smokePath))
+  );
+  const daemonPath = GLib.build_filenamev([root, 'searchd', 'main.js']);
+  if (!GLib.file_test(daemonPath, GLib.FileTest.IS_REGULAR))
+    return false;
+
+  try {
+    daemonProcess = Gio.Subprocess.new(
+      [gjs, '-m', daemonPath],
+      Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
+    );
+  } catch {
+    daemonProcess = null;
+    return false;
+  }
+
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    if (await daemonOwnsBus())
+      return true;
+    await sleep(50);
+  }
+
+  stopDaemon();
+  return false;
+}
+
+function stopDaemon() {
+  const process = daemonProcess;
+  daemonProcess = null;
+  if (!process)
+    return;
+
+  try {
+    process.send_signal(15);
+  } catch {
+    // The daemon may already be gone with the private bus.
+  }
+}
+
+async function daemonSearchResults(query) {
+  const reply = await dbusCall(
+    DAEMON_BUS_NAME,
+    DAEMON_OBJECT_PATH,
+    DAEMON_SEARCH_INTERFACE,
+    'Search',
+    new GLib.Variant('(ssi)', [query, '', 20]),
+    DAEMON_SEARCH_REPLY,
+    3000
+  );
+  const [rawResults] = reply.deep_unpack();
+  return Array.isArray(rawResults) ? rawResults : [];
+}
+
+/**
+ * Fetch a real a{sv} result whose serialized actions parse to a primary
+ * action. Raw D-Bus values are Variants, so this also covers the regression
+ * where parseActions() only understood strings and plain objects.
+ */
+async function actionableDaemonResult() {
+  for (const query of ['gnome', 'settings', 'terminal']) {
+    let results = [];
+    try {
+      results = await daemonSearchResults(query);
+    } catch {
+      continue;
+    }
+
+    for (const raw of results) {
+      const parsed = parseActions(raw);
+      if (parsed.primary && parsed.primary.type)
+        return raw;
+    }
+  }
+  return null;
+}
+
 function extensionState(uuid = UUID) {
   return Main.extensionManager?.lookup(uuid) ?? null;
 }
@@ -126,6 +278,7 @@ function pressEscape(modal) {
  */
 export async function run() {
   let step = 'window-actions';
+  let dbusActivation = false;
   try {
     // Meta.Window cannot be constructed from an automation script, so the
     // window-actions marker exercises the pure planner in the Shell context.
@@ -371,6 +524,38 @@ export async function run() {
     await waitForClipboard('SMOKE-42', 'clipboard to contain SMOKE-42');
     assert(modal.isOpen === false, step, 'modal is still open after activation');
 
+    step = 'activate-dbus';
+    if (await ensureDaemon()) {
+      const rawResult = await actionableDaemonResult();
+      if (rawResult) {
+        // Same path as Enter: daemon a{sv} -> DaemonClient normalization ->
+        // searchStream normalization -> parseActions in _activateResult().
+        const daemonResult = normalizeDaemonResult(rawResult);
+        assert(daemonResult, step, 'D-Bus result did not normalize');
+        normalizeResultActions(daemonResult);
+
+        const actions = parseActions(daemonResult);
+        assert(
+          actions.primary?.type !== null &&
+            actions.primary?.type !== undefined &&
+            String(actions.primary.type) !== '',
+          step,
+          `parseActions(result).primary.type is ${JSON.stringify(actions.primary?.type ?? null)}`
+        );
+
+        // A raw a{sv} keeps its values as Variants after deep_unpack; the
+        // regression is only covered when the raw dict is passed in too.
+        const rawActions = parseActions(rawResult);
+        assert(rawActions.primary?.type, step,
+          'raw Variant actions did not parse to a primary action');
+        dbusActivation = true;
+      } else {
+        print('SKIP: activate-dbus (daemon nie zwrócił wyniku z akcją)');
+      }
+    } else {
+      print('SKIP: activate-dbus (daemon niedostępny)');
+    }
+
     step = 'modal-closed';
     Main.extensionManager.disableExtension(COEXIST_UUID);
     Main.extensionManager.disableExtension(UUID);
@@ -389,11 +574,16 @@ export async function run() {
 
     // Keep the five-marker line for older local smoke wrappers; the canonical
     // marker contract (including window-actions and preview-image) is printed
-    // last.
+    // last. activate-dbus is only claimed when the real D-Bus path ran.
+    const markers = dbusActivation
+      ? MARKERS
+      : MARKERS.filter(marker => marker !== 'activate-dbus');
     print('PASS: modal-open modal-typed modal-esc modal-closed preview-text');
-    print(`PASS: ${MARKERS.join(' ')}`);
+    print(`PASS: ${markers.join(' ')}`);
   } catch (error) {
     print(`FAIL: ${step}: ${error.message}`);
     throw error;
+  } finally {
+    stopDaemon();
   }
 }

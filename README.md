@@ -128,13 +128,16 @@ zamyka modala.
 
 Wyniki z `gnome-spotlightd` niosą akcje jako opis JSON (`app`, `file`,
 `settings`, `copy`, `command`, `systemd`, `reveal`, `docker-stop`, `remote`).
-`lib/action-runner.js` zamienia ten opis na efekt w Shellu; `Enter` i kliknięcie
-wiersza przechodzą przez tę samą ścieżkę (`_activateResult()`). Akcje `remote`
-są przekazywane do daemona metodą `Activate(id)` na
-`org.gnome.Spotlight.Search`, która wywołuje `SearchProvider2.ActivateResult`
-u natywnego providera. Wyniki `app`/`file` są obsługiwane lokalnie przez Shell
-(`Shell.AppSystem` i `Gio.AppInfo`), więc nie wymagają uruchamiania aplikacji
-przez daemona.
+D-Bus opakowuje każdą wartość `a{sv}` w `GLib.Variant`, dlatego
+`parseActions()` rozpakowuje warianty (zarówno `Variant<string>` z JSON-em, jak
+i `Variant<a{sv}>`) przez `deepUnpack()`/`deep_unpack()`; `lib/searchStream.js`
+normalizuje `actions` już na wejściu strumienia. `lib/action-runner.js`
+zamienia ten opis na efekt w Shellu; `Enter` i kliknięcie wiersza przechodzą
+przez tę samą ścieżkę (`_activateResult()`). Akcje `remote` są przekazywane do
+daemona metodą `Activate(id)` na `org.gnome.Spotlight.Search`, która wywołuje
+`SearchProvider2.ActivateResult` u natywnego providera. Wyniki `app`/`file` są
+obsługiwane lokalnie przez Shell (`Shell.AppSystem` i `Gio.AppInfo`), więc nie
+wymagają uruchamiania aplikacji przez daemona.
 
 ### Akcje okien
 
@@ -315,11 +318,14 @@ bash tools/headless-smoke.sh
 ```
 
 Skrypt wypisuje `PASS: window-actions modal-open modal-typed modal-esc
-modal-closed preview-text preview-image clipboard-item activate-copy` i kończy
-się kodem 0 (zachowana jest też starsza linia bez `window-actions` dla
-dotychczasowych wrapperów). Gdy w środowisku brakuje `gnome-shell` albo nie da
-się ustawić `GI_TYPELIB_PATH`, wypisuje `SKIP: <powód>` i kończy się kodem 3.
-Inne błędy Shella oznaczają kod ≠ 0.
+modal-closed preview-text preview-image clipboard-item activate-copy
+activate-dbus` i kończy się kodem 0 (zachowana jest też starsza linia bez
+`window-actions` dla dotychczasowych wrapperów). Wariant `activate-dbus`
+pobiera realny wynik z `org.gnome.Spotlight.Search.Search` i sprawdza
+`parseActions(result).primary.type`; gdy daemon nie odpowiada, krok jest
+pomijany, a znacznik nie trafia do linii `PASS`. Gdy w środowisku brakuje
+`gnome-shell` albo nie da się ustawić `GI_TYPELIB_PATH`, skrypt wypisuje
+`SKIP: <powód>` i kończy się kodem 3. Inne błędy Shella oznaczają kod ≠ 0.
 
 Bramka wydajnościowa frontendu (ten sam izolowany, headless Shell):
 

@@ -88,6 +88,57 @@ test('parseActions drops invalid menu entries instead of throwing', () => {
   assertEqual(parsed.menu[0].id, 'ok');
 });
 
+function fakeVariant(deepUnpack) {
+  return { deepUnpack };
+}
+
+test('parseActions unwraps a Variant JSON string from result.actions', () => {
+  const parsed = parseActions({
+    actions: fakeVariant(
+      () => '{"primary":{"type":"app","appId":"x.desktop"}}'
+    ),
+  });
+
+  assertEqual(parsed.primary.type, 'app');
+  assertEqual(parsed.primary.appId, 'x.desktop');
+  assertEqual(parsed.secondary, null);
+  assertDeepEqual(parsed.menu, []);
+});
+
+test('parseActions accepts a Variant dictionary as the result', () => {
+  const primary = { id: 'launch', type: 'app', appId: 'x.desktop' };
+  const parsed = parseActions(fakeVariant(() => ({ primary })));
+
+  assertEqual(parsed.primary.type, 'app');
+  assertEqual(parsed.primary.appId, 'x.desktop');
+});
+
+test('parseActions unwraps a Variant carrying the JSON actions string', () => {
+  // Realny kształt z daemona: a{sv} opakowuje `actions` w Variant<string> z JSON-em.
+  const payload = JSON.stringify({
+    primary: { id: 'launch', type: 'app', appId: 'x.desktop' },
+    menu: [
+      { id: 'copy', type: 'copy', text: 'x' },
+      { id: 'reveal', type: 'reveal', path: '/tmp/x' },
+    ],
+  });
+
+  const parsed = parseActions({ actions: fakeVariant(() => payload) });
+
+  assertEqual(parsed.primary.type, 'app');
+  assertEqual(parsed.primary.appId, 'x.desktop');
+  assertEqual(parsed.menu.length, 2);
+  assertEqual(parsed.menu[0].type, 'copy');
+  assertEqual(parsed.menu[1].type, 'reveal');
+});
+
+test('parseActions accepts a Variant that already unpacks to an object', () => {
+  const parsed = parseActions(fakeVariant(() => ({ primary: { type: 'file', path: '/tmp/a.txt' } })));
+
+  assertEqual(parsed.primary.type, 'file');
+  assertEqual(parsed.primary.path, '/tmp/a.txt');
+});
+
 test('argvForCommand uses bash -lc and keeps the command as one argument', () => {
   assertDeepEqual(
     argvForCommand('echo "a b" && true'),
