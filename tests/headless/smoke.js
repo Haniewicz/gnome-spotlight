@@ -1,6 +1,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -31,6 +32,12 @@ const MARKERS = [
   'preview-ctrl-space',
   'preview-text',
   'preview-image',
+  'scroll-overflow',
+  'scroll-keyboard',
+  'scroll-wheel',
+  'blur-off-default',
+  'blur-clone',
+  'blur-destroyed',
   'blur-off-by-default',
   'blur-applied',
   'clipboard-item',
@@ -273,6 +280,43 @@ function assert(condition, step, message) {
     throw new Error(`${step}: ${message}`);
 }
 
+function smokeResults(count, prefix) {
+  return [{
+    id: `${prefix}-section`,
+    title: 'Scroll',
+    results: Array.from({ length: count }, (_value, index) => ({
+      id: `${prefix}-${index}`,
+      providerId: prefix,
+      title: `${prefix} ${index + 1}`,
+      subtitle: `wynik ${index + 1}`,
+      kind: 'Test',
+    })),
+  }];
+}
+
+function actorEffects(actor) {
+  const effects = [];
+  const stack = [actor];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current)
+      continue;
+    try {
+      effects.push(...(current.get_effects?.() ?? []));
+    } catch {
+      // A destroyed actor may already reject property access.
+    }
+    let children = [];
+    try {
+      children = current.get_children?.() ?? [];
+    } catch {
+      children = [];
+    }
+    stack.push(...children);
+  }
+  return effects;
+}
+
 function pressEscape(modal) {
   return modal._onCapturedEvent(modal, {
     type: () => Clutter.EventType.KEY_PRESS,
@@ -305,6 +349,7 @@ function actionMenuItems(menu) {
 export async function run() {
   let step = 'window-actions';
   let dbusActivation = false;
+  let blurCloneAvailable = true;
   try {
     // Meta.Window cannot be constructed from an automation script, so the
     // window-actions marker exercises the pure planner in the Shell context.
@@ -769,6 +814,114 @@ export async function run() {
     assert(modal._selectedIndex === 1, step,
       `Tab in one section did not move by one (index ${modal._selectedIndex})`);
 
+    step = 'scroll-overflow';
+    const originalLimit = modal._options.limit;
+    modal._options.limit = 40;
+    modal._setCompact(false);
+    modal.setResults(smokeResults(25, 'overflow'));
+    await sleep(50);
+    const resultsScroll = modal._resultsScroll;
+    assert(resultsScroll, step, 'modal has no St.ScrollView for the result list');
+    assert(resultsScroll.hscrollbar_policy === St.PolicyType.NEVER, step,
+      'result scroll view allows a horizontal scrollbar');
+    assert(resultsScroll.vscrollbar_policy === St.PolicyType.AUTOMATIC, step,
+      'result scroll view does not use automatic vertical scrolling');
+    assert(resultsScroll.enable_mouse_scrolling === true, step,
+      'result scroll view has mouse scrolling disabled');
+    assert(
+      resultsScroll.overlay_scrollbars === false ||
+        resultsScroll.overlay_scrolling === false,
+      step,
+      'result scroll view uses overlay scrolling'
+    );
+
+    const scrollAdjustment = resultsScroll.vadjustment;
+    await waitFor(
+      () => resultsScroll.height > 0 &&
+        scrollAdjustment.page_size > 0 &&
+        scrollAdjustment.upper > scrollAdjustment.page_size,
+      'result list scroll overflow to be allocated'
+    );
+    assert(scrollAdjustment.value === 0, step,
+      `scroll starts at ${scrollAdjustment.value}, expected 0`);
+    const scrollMonitor = modal._getMonitor();
+    assert(
+      resultsScroll.height <= Math.ceil(scrollMonitor.height * 0.6),
+      step,
+      `scroll height ${resultsScroll.height} exceeds 60% of monitor ` +
+        `${scrollMonitor.height}`
+    );
+    const scrollWorkArea = Main.layoutManager.getWorkAreaForMonitor(
+      modal._getMonitorIndex()
+    );
+    assert(
+      modal.y + modal.height <= scrollWorkArea.y + scrollWorkArea.height + 1,
+      step,
+      'modal overflows the monitor work area'
+    );
+
+    step = 'scroll-keyboard';
+    modal.setResults(smokeResults(20, 'keyboard'));
+    await sleep(50);
+    await waitFor(
+      () => scrollAdjustment.upper > scrollAdjustment.page_size &&
+        scrollAdjustment.value === 0 &&
+        modal._rows[0]?.height > 0,
+      'keyboard scroll list to be allocated'
+    );
+    for (let i = 0; i < 12; i++)
+      pressKey(modal, Clutter.KEY_Down);
+    await waitFor(
+      () => scrollAdjustment.value > 0,
+      'arrow keys to scroll the selected row into view'
+    );
+    const keyboardRow = modal._rows[modal._selectedIndex];
+    const keyboardOffset = modal._rowOffset(keyboardRow);
+    assert(
+      keyboardOffset >= scrollAdjustment.value &&
+        keyboardOffset <= scrollAdjustment.value + scrollAdjustment.page_size,
+      step,
+      `selected row offset ${keyboardOffset} is outside the visible ` +
+        `[${scrollAdjustment.value}, ` +
+        `${scrollAdjustment.value + scrollAdjustment.page_size}] range`
+    );
+
+    step = 'scroll-wheel';
+    modal.setResults(smokeResults(25, 'wheel'));
+    await sleep(50);
+    await waitFor(
+      () => scrollAdjustment.upper > scrollAdjustment.page_size &&
+        scrollAdjustment.value === 0,
+      'wheel scroll list to be allocated'
+    );
+    const wheelIndex = modal._selectedIndex;
+    const wheelValue = scrollAdjustment.value;
+    const wheelEvent = {
+      type: () => Clutter.EventType.SCROLL,
+      get_scroll_direction: () => Clutter.ScrollDirection.DOWN,
+      get_scroll_delta: () => [0, 0],
+      get_state: () => 0,
+    };
+    // `emit()` na GObject wymaga prawdziwego Clutter.Event (boxed type); w smoke
+    // nie da się go skonstruować, więc wołamy handler bezpośrednio.
+    const wheelHandled = modal._onResultsScroll(resultsScroll, wheelEvent);
+    assert(wheelHandled === Clutter.EVENT_STOP, step,
+      'scroll-down event was not consumed by the result list');
+    await waitFor(
+      () => scrollAdjustment.value > wheelValue,
+      'mouse wheel to change the vertical adjustment'
+    );
+    assert(modal._selectedIndex === wheelIndex, step,
+      `mouse wheel changed the selection from ${wheelIndex} to ` +
+        `${modal._selectedIndex}`);
+    modal._options.limit = originalLimit;
+
+    step = 'blur-off-default';
+    assert(modal._panelBlurClone === null, step,
+      'blur clone exists before blur-enabled was turned on');
+    assert(modal._panelBlurActor === null, step,
+      'blur container exists before blur-enabled was turned on');
+
     step = 'blur-off-by-default';
     assert(modal._panelBlurActor === null, step,
       'blur backdrop appeared without blur-enabled');
@@ -778,25 +931,72 @@ export async function run() {
     assert(modalSettings, step, 'extension settings are unavailable');
     modalSettings.set_int('blur-radius', 32);
     modalSettings.set_boolean('blur-enabled', true);
-    const blurEffect = await waitFor(
-      () => {
-        const effects = modal._panelBlurActor?.get_effects?.() ?? [];
-        return effects.find(effect => Number(effect.radius) === 32) ?? null;
-      },
-      'Shell.BlurEffect with radius 32 on the panel backdrop'
-    );
-    assert(blurEffect, step, 'panel backdrop has no BlurEffect');
-    assert(modal._panelBlurActor.visible === true, step,
-      'panel backdrop actor is hidden');
-    assert(modal._panelBlurActor.get_parent() === modal._panel, step,
-      'panel backdrop actor is not inside the modal actor tree');
 
-    // Turning the setting off must remove the effect entirely, not just hide
-    // the actor.
+    const backgroundGroup = Main.layoutManager?._backgroundGroup ?? null;
+    if (typeof Shell.BlurEffect !== 'function' || !backgroundGroup) {
+      blurCloneAvailable = false;
+      await waitFor(
+        () => modal._panelBlurClone === null && modal._panelBlurActor === null,
+        'translucent fallback with blur-enabled on an unavailable backend'
+      );
+      const reason = typeof Shell.BlurEffect !== 'function'
+        ? 'Shell.BlurEffect unavailable'
+        : 'background group unavailable';
+      print(`SKIP: blur-clone (${reason})`);
+    } else {
+      const blurClone = await waitFor(
+        () => modal._panelBlurClone,
+        'panel background clone'
+      );
+      const blurEffect = (blurClone.get_effects?.() ?? [])
+        .find(effect => Number(effect.radius) === 32) ?? null;
+      assert(blurEffect, step, 'panel blur clone has no BlurEffect with radius 32');
+      assert(blurClone.visible === true, step, 'panel blur clone is hidden');
+      assert(modal._panelBlurActor?.visible === true, step,
+        'panel backdrop container is hidden');
+      assert(modal._panelBlurActor.get_parent() === modal._panel, step,
+        'panel backdrop container is not inside the modal actor tree');
+      assert(modal._panelBlurVeil, step, 'panel blur veil is missing');
+      assert(modal._panelBlurVeil.get_parent() === modal._panelBlurActor, step,
+        'panel blur veil is not above the clone');
+      const cloneSource = blurClone.source;
+      assert(
+        cloneSource === backgroundGroup ||
+          cloneSource?.get_parent?.() === backgroundGroup,
+        step,
+        'panel blur clone does not clone the Shell background group'
+      );
+      assert(blurClone.x < 0 && blurClone.y < 0, step,
+        `panel blur clone offset is not negative (${blurClone.x}, ${blurClone.y})`);
+
+      // Live radius changes must reach the existing effect, without reopening
+      // the modal or rebuilding the actor tree.
+      modalSettings.set_int('blur-radius', 40);
+      await waitFor(
+        () => Number(modal._panelBlurEffect?.radius) === 40,
+        'live blur radius update'
+      );
+      modalSettings.set_int('blur-radius', 32);
+      await waitFor(
+        () => Number(modal._panelBlurEffect?.radius) === 32,
+        'blur radius restored to 32'
+      );
+    }
+
+    // Turning the setting off must remove the clone and its effect entirely,
+    // not just hide the actors.
+    step = 'blur-destroyed';
     modalSettings.set_boolean('blur-enabled', false);
     await waitFor(
-      () => modal._panelBlurActor === null,
-      'blur backdrop removal after blur-enabled=false'
+      () => modal._panelBlurClone === null && modal._panelBlurActor === null,
+      'blur clone removal after blur-enabled=false'
+    );
+    assert(modal._panelBlurEffect === null, step,
+      'blur effect reference survived blur-enabled=false');
+    assert(
+      actorEffects(modal).every(effect => Number(effect.radius) !== 32),
+      step,
+      'a Shell.BlurEffect with radius 32 is still in the modal actor tree'
     );
 
     modal.close();
@@ -889,9 +1089,15 @@ export async function run() {
     // Keep the five-marker line for older local smoke wrappers; the canonical
     // marker contract (including window-actions and preview-image) is printed
     // last. activate-dbus is only claimed when the real D-Bus path ran.
-    const markers = dbusActivation
+    let markers = dbusActivation
       ? MARKERS
       : MARKERS.filter(marker => marker !== 'activate-dbus');
+    if (!blurCloneAvailable) {
+      markers = markers.filter(marker =>
+        marker !== 'blur-clone' && marker !== 'blur-applied'
+      );
+      markers.push('blur-unavailable');
+    }
     print('PASS: modal-open modal-typed modal-esc modal-closed preview-text');
     print(`PASS: ${markers.join(' ')}`);
   } catch (error) {
