@@ -59,6 +59,8 @@ lib/providers/commands.js        # prefiks ">"
 lib/providers/files.js           # Gio.Subprocess -> locate
 lib/providers/calculator.js      # opakowanie lib/calculator.js na Result
 lib/ui/modal.js                  # St: overlay, entry, lista, sekcje
+lib/ui/backdrop.js               # St: klon tapety + okien pod blur
+lib/ui/rounded-mask.js           # PURE geometria + Clutter.ShaderEffect maski
 lib/ui/resultRow.js              # St: pojedynczy wiersz
 lib/ui/preview.js                # St: panel podglądu
 lib/ui/actions.js               # menu akcji (Ctrl+K)
@@ -172,6 +174,12 @@ Reguły wykonania:
 - Styl: ciemny panel `rgba(26,27,34,0.93)`, promień 18 px, obramowanie `rgba(255,255,255,0.11)`,
   cień, akcent `#3584e4`, font z motywu (`font-family` z `stylesheet.css` nie nadpisujemy —
   dziedziczymy). Wartości z makiety, tolerancja ±2 px.
+- Blur: kontener tła jest pierwszym dzieckiem `Clutter.BinLayout` panelu, ma zerowy
+  naturalny rozmiar i `clip_to_allocation`; nie zmienia wysokości panelu. Klonuje tapetę
+  i `global.window_group` (nigdy `Main.uiGroup`/stage, żeby nie złapać własnego panelu),
+  a `Clutter.ShaderEffect` z uniformem `radius` (18 px z CSS) maskuje zaokrąglone rogi
+  po `Shell.BlurEffect`. Błąd kompilacji shadera wyłącza blur i zostawia półprzezroczysty
+  panel.
 - Skrót: `Main.wm.addKeybinding('toggle-keybinding', settings, Meta.KeyBindingFlags.NONE,
   Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW, handler)`; w `disable()` zawsze
   `removeKeybinding`. Domyślnie `['<Super>space']`. Konflikt z „przełącz języki”: nie nadpisujemy,

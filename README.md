@@ -192,10 +192,15 @@ Na początku okna preferencji znajduje się grupa **„Wygląd”**:
   tylko przy włączonym blurze.
 
 Blur korzysta z `Shell.BlurEffect` (GNOME Shell 51) i rozmywa to, co jest pod
-panelem, a półprzezroczysta ciemna warstwa (`1 - panel-opacity + 0.15`) chroni
-czytelność tekstu. Jest **wyłączony domyślnie**, bo rozmycie w czasie
-rzeczywistym zużywa GPU i może obciążać słabsze karty; w razie potrzeby obniż
-promień. Wszystkie trzy ustawienia działają na żywo, bez przycisku „Zapisz”.
+panelem: klonuje dwie warstwy — tapetę (`Main.layoutManager._backgroundGroup`)
+i okna (`global.window_group`) — do kontenera o rozmiarze panelu. Maska
+`Clutter.ShaderEffect` zaokrągla rogi (18 px), a półprzezroczysta ciemna
+warstwa (`1 - panel-opacity + 0.15`) chroni czytelność tekstu. Kontener tła nie
+wpływa na wysokość panelu; jeśli shader się nie skompiluje, blur jest wyłączany
+i zostaje sam półprzezroczysty panel. Jest **wyłączony domyślnie**, bo rozmycie
+w czasie rzeczywistym zużywa GPU i może obciążać słabsze karty; w razie potrzeby
+obniż promień. Wszystkie trzy ustawienia działają na żywo, bez przycisku
+„Zapisz”.
 
 ## Natywne providery GNOME
 

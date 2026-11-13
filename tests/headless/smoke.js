@@ -40,6 +40,12 @@ const MARKERS = [
   'blur-destroyed',
   'blur-off-by-default',
   'blur-applied',
+  'blur-layers',
+  'blur-window-clone',
+  'blur-height-stable',
+  'blur-mask-effect',
+  'blur-mask-radius',
+  'blur-teardown',
   'clipboard-item',
   'action-menu',
   'action-menu-anchored',
@@ -315,6 +321,66 @@ function actorEffects(actor) {
     stack.push(...children);
   }
   return effects;
+}
+
+function descendantActors(actor) {
+  const actors = [];
+  const stack = [actor];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current)
+      continue;
+    actors.push(current);
+    let children = [];
+    try {
+      children = current.get_children?.() ?? [];
+    } catch {
+      children = [];
+    }
+    stack.push(...children);
+  }
+  return actors;
+}
+
+function cloneSources(actor) {
+  return descendantActors(actor)
+    .filter(child =>
+      typeof child?.get_source === 'function' ||
+      Object.prototype.hasOwnProperty.call(child ?? {}, 'source')
+    )
+    .map(clone => {
+      try {
+        return clone.get_source?.() ?? clone.source ?? null;
+      } catch {
+        return null;
+      }
+    });
+}
+
+function verticalInsets(actor) {
+  try {
+    const node = actor?.get_theme_node?.();
+    if (!node)
+      return 0;
+    const side = St.Side;
+    let inset = 0;
+    for (const edge of [side.TOP, side.BOTTOM]) {
+      inset += Number(node.get_padding?.(edge) ?? 0);
+      inset += Number(node.get_border_width?.(edge) ?? 0);
+    }
+    return inset;
+  } catch {
+    return 0;
+  }
+}
+
+function expectedPanelContentHeight(modal) {
+  const searchRow = modal._entry?.get_parent?.() ?? null;
+  return Number(searchRow?.height ?? 0) +
+    Number(modal._body?.height ?? 0) +
+    Number(modal._footer?.height ?? 0) +
+    verticalInsets(modal._panelContent) +
+    verticalInsets(modal._panel);
 }
 
 function pressEscape(modal) {
@@ -921,10 +987,27 @@ export async function run() {
       'blur clone exists before blur-enabled was turned on');
     assert(modal._panelBlurActor === null, step,
       'blur container exists before blur-enabled was turned on');
+    assert(modal._panelBlurLayer === null, step,
+      'blur layer exists before blur-enabled was turned on');
+    assert(modal._panelBlurMask === null, step,
+      'blur mask exists before blur-enabled was turned on');
 
-    step = 'blur-off-by-default';
-    assert(modal._panelBlurActor === null, step,
-      'blur backdrop appeared without blur-enabled');
+    step = 'blur-height-stable';
+    await waitFor(
+      () => modal.height > 0 &&
+        modal._panel.height > 0 &&
+        modal._body.height > 0,
+      'panel layout before enabling blur'
+    );
+    const heightWithoutBlur = modal.height;
+    const panelHeightWithoutBlur = modal._panel.height;
+    const contentHeightWithoutBlur = expectedPanelContentHeight(modal);
+    assert(
+      Math.abs(panelHeightWithoutBlur - contentHeightWithoutBlur) <= 2,
+      step,
+      `blur-off panel height ${panelHeightWithoutBlur} differs from ` +
+        `content height ${contentHeightWithoutBlur}`
+    );
 
     step = 'blur-applied';
     const modalSettings = extension.stateObj._settings;
@@ -933,7 +1016,8 @@ export async function run() {
     modalSettings.set_boolean('blur-enabled', true);
 
     const backgroundGroup = Main.layoutManager?._backgroundGroup ?? null;
-    if (typeof Shell.BlurEffect !== 'function' || !backgroundGroup) {
+    if (typeof Shell.BlurEffect !== 'function' || !backgroundGroup ||
+        !global.window_group) {
       blurCloneAvailable = false;
       await waitFor(
         () => modal._panelBlurClone === null && modal._panelBlurActor === null,
@@ -941,33 +1025,115 @@ export async function run() {
       );
       const reason = typeof Shell.BlurEffect !== 'function'
         ? 'Shell.BlurEffect unavailable'
-        : 'background group unavailable';
+        : !backgroundGroup
+          ? 'background group unavailable'
+          : 'window group unavailable';
       print(`SKIP: blur-clone (${reason})`);
     } else {
       const blurClone = await waitFor(
         () => modal._panelBlurClone,
         'panel background clone'
       );
-      const blurEffect = (blurClone.get_effects?.() ?? [])
-        .find(effect => Number(effect.radius) === 32) ?? null;
-      assert(blurEffect, step, 'panel blur clone has no BlurEffect with radius 32');
+      const blurLayer = await waitFor(
+        () => modal._panelBlurLayer,
+        'panel blur layer'
+      );
+      const blurEffect = (modal._panelBlurActor?.get_effects?.() ?? [])
+        .find(effect => effect instanceof Shell.BlurEffect) ?? null;
+      assert(blurEffect, step, 'panel backdrop has no Shell.BlurEffect');
+      assert(Number(blurEffect.radius) === 32, step,
+        `panel BlurEffect radius is ${blurEffect.radius}, expected 32`);
       assert(blurClone.visible === true, step, 'panel blur clone is hidden');
       assert(modal._panelBlurActor?.visible === true, step,
         'panel backdrop container is hidden');
       assert(modal._panelBlurActor.get_parent() === modal._panel, step,
         'panel backdrop container is not inside the modal actor tree');
+      assert(modal._panelBlurActor.get_child_at_index?.(0) ===
+        modal._panelBlurClone, step,
+        'background clone is not the first backdrop child');
       assert(modal._panelBlurVeil, step, 'panel blur veil is missing');
-      assert(modal._panelBlurVeil.get_parent() === modal._panelBlurActor, step,
-        'panel blur veil is not above the clone');
-      const cloneSource = blurClone.source;
-      assert(
-        cloneSource === backgroundGroup ||
-          cloneSource?.get_parent?.() === backgroundGroup,
-        step,
-        'panel blur clone does not clone the Shell background group'
+      assert(modal._panelBlurVeil.get_parent() === modal._panel, step,
+        'panel blur veil is not a sibling of the backdrop');
+      assert(modal._panel.get_child_at_index?.(1) ===
+        modal._panelBlurVeil, step,
+        'panel blur veil is not above the backdrop');
+
+      step = 'blur-layers';
+      const layerChildren = blurLayer.get_children?.() ?? [];
+      const layerClones = descendantActors(blurLayer).filter(child =>
+        typeof child?.get_source === 'function'
       );
+      assert(layerChildren.length === 2, step,
+        `panel blur layer has ${layerChildren.length} children, expected 2`);
+      assert(layerClones.length === 2, step,
+        `panel blur layer has ${layerClones.length} clones, expected 2`);
+      assert(layerChildren[0] === modal._panelBlurClone, step,
+        'background clone is not the first layer child');
+      const sources = cloneSources(blurLayer);
+      const backgroundSource = sources[0];
+      assert(
+        backgroundSource === backgroundGroup ||
+          backgroundSource?.get_parent?.() === backgroundGroup,
+        step,
+        'first panel blur clone does not clone the Shell background group'
+      );
+      assert(!sources.some(source =>
+        source === Main.uiGroup ||
+        source === global.stage ||
+        source === modal ||
+        source === modal._panel ||
+        source === blurLayer
+      ), step, 'panel blur clones contain the panel/UI group itself');
       assert(blurClone.x < 0 && blurClone.y < 0, step,
         `panel blur clone offset is not negative (${blurClone.x}, ${blurClone.y})`);
+
+      step = 'blur-window-clone';
+      assert(modal._panelBlurWindowClone, step,
+        'panel blur has no window-group clone');
+      assert(layerClones[1]?.source === global.window_group, step,
+        'second panel blur clone does not clone global.window_group');
+      assert(modal._panelBlurWindowClone.source === global.window_group, step,
+        'window clone source is not global.window_group');
+      assert(modal._panelBlurWindowClone.x < 0 &&
+        modal._panelBlurWindowClone.y < 0, step,
+        'window clone offset is not negative');
+
+      step = 'blur-mask-effect';
+      const layerEffects = modal._panelBlurActor?.get_effects?.() ?? [];
+      assert(layerEffects.length === 2, step,
+        `backdrop container has ${layerEffects.length} effects, expected 2`);
+      assert(layerEffects[0] instanceof Shell.BlurEffect, step,
+        'first backdrop effect is not Shell.BlurEffect');
+      assert(layerEffects[1] instanceof Clutter.ShaderEffect, step,
+        'second backdrop effect is not Clutter.ShaderEffect');
+      assert(modal._panelBlurMask === layerEffects[1], step,
+        'modal does not reference the attached rounded mask');
+
+      step = 'blur-mask-radius';
+      const maskRadius = Number(
+        modal._panelBlurMask?.radius ?? modal._panelBlurMask?._radius
+      );
+      assert(maskRadius === 18, step,
+        `mask uniform radius is ${maskRadius}, expected 18`);
+
+      step = 'blur-height-stable';
+      await waitFor(
+        () => Math.abs(modal.height - heightWithoutBlur) <= 2,
+        'panel height to stay stable after enabling blur'
+      );
+      assert(Math.abs(modal.height - heightWithoutBlur) <= 2, step,
+        `modal height ${modal.height} differs from blur-off ` +
+          `${heightWithoutBlur}`);
+      assert(
+        Math.abs(modal._panel.height - panelHeightWithoutBlur) <= 2,
+        step,
+        `panel height ${modal._panel.height} differs from blur-off ` +
+          `${panelHeightWithoutBlur}`
+      );
+      const contentHeight = expectedPanelContentHeight(modal);
+      assert(Math.abs(modal._panel.height - contentHeight) <= 2, step,
+        `panel height ${modal._panel.height} differs from content ` +
+          `${contentHeight}`);
 
       // Live radius changes must reach the existing effect, without reopening
       // the modal or rebuilding the actor tree.
@@ -983,21 +1149,25 @@ export async function run() {
       );
     }
 
-    // Turning the setting off must remove the clone and its effect entirely,
-    // not just hide the actors.
-    step = 'blur-destroyed';
+    // Turning the setting off must remove the clones, effects and mask
+    // entirely, not just hide the actors.
+    step = 'blur-teardown';
     modalSettings.set_boolean('blur-enabled', false);
     await waitFor(
-      () => modal._panelBlurClone === null && modal._panelBlurActor === null,
-      'blur clone removal after blur-enabled=false'
+      () => modal._panelBlurClone === null &&
+        modal._panelBlurActor === null &&
+        modal._panelBlurLayer === null &&
+        modal._panelBlurMask === null,
+      'blur actor removal after blur-enabled=false'
     );
     assert(modal._panelBlurEffect === null, step,
       'blur effect reference survived blur-enabled=false');
-    assert(
-      actorEffects(modal).every(effect => Number(effect.radius) !== 32),
-      step,
-      'a Shell.BlurEffect with radius 32 is still in the modal actor tree'
-    );
+    assert(modal._panelBlurWindowClone === null, step,
+      'window clone reference survived blur-enabled=false');
+    assert(cloneSources(modal).length === 0, step,
+      'blur clones leaked after blur-enabled=false');
+    assert(actorEffects(modal).length === 0, step,
+      'blur effects leaked after blur-enabled=false');
 
     modal.close();
 
@@ -1093,9 +1263,17 @@ export async function run() {
       ? MARKERS
       : MARKERS.filter(marker => marker !== 'activate-dbus');
     if (!blurCloneAvailable) {
-      markers = markers.filter(marker =>
-        marker !== 'blur-clone' && marker !== 'blur-applied'
-      );
+      const unavailableMarkers = new Set([
+        'blur-clone',
+        'blur-applied',
+        'blur-layers',
+        'blur-window-clone',
+        'blur-height-stable',
+        'blur-mask-effect',
+        'blur-mask-radius',
+        'blur-teardown',
+      ]);
+      markers = markers.filter(marker => !unavailableMarkers.has(marker));
       markers.push('blur-unavailable');
     }
     print('PASS: modal-open modal-typed modal-esc modal-closed preview-text');
