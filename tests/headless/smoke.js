@@ -31,6 +31,8 @@ const MARKERS = [
   'preview-image',
   'clipboard-item',
   'action-menu',
+  'action-menu-anchored',
+  'action-menu-rightclick',
   'tab-sections',
   'activate-copy',
   'activate-dbus',
@@ -641,11 +643,39 @@ export async function run() {
     assert(menuKey === Clutter.EVENT_STOP, step, 'Ctrl+K was not consumed');
     const menu = modal._actionMenu;
     assert(menu, step, 'Ctrl+K did not open the action menu');
+
+    step = 'action-menu-anchored';
+    assert(menu.sourceActor === modal._selectedRow(), step,
+      'Ctrl+K anchored the action menu to something other than the selected row');
+
     const menuItems = actionMenuItems(menu);
     assert(menuItems.length >= 2, step,
       `action menu has ${menuItems.length} items, expected at least 2`);
     assert(menuItems[0].sensitive === true, step,
       'first action menu item is not sensitive');
+    modal._closeActionMenu();
+
+    step = 'action-menu-rightclick';
+    const secondActionResult = {
+      ...actionResult,
+      id: 'smoke-actions-2',
+      title: 'SMOKE MENU 2',
+    };
+    modal._setCompact(false);  // kompakt startuje bez listy wyników
+    modal.setResults([{
+      id: 'smoke',
+      title: 'Smoke',
+      results: [actionResult, secondActionResult],
+    }]);
+    assert(modal._rows.length === 2, step,
+      `expected two rows for the right-click check, got ${modal._rows.length}`);
+    const clickedRow = modal._rows[1];
+    const fakeEvent = { get_button: () => 3 };
+    clickedRow.emit('context-menu', clickedRow, fakeEvent);
+    assert(modal._selectedIndex === 1, step,
+      `right-click did not select the clicked row (index ${modal._selectedIndex})`);
+    assert(modal._actionMenu?.sourceActor === clickedRow, step,
+      'right-click action menu is not anchored to the clicked row');
     modal._closeActionMenu();
 
     step = 'tab-sections';

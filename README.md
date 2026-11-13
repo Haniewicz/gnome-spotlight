@@ -319,8 +319,9 @@ bash tools/headless-smoke.sh
 ```
 
 Skrypt wypisuje `PASS: window-actions modal-open modal-typed modal-esc
-modal-closed preview-text preview-image clipboard-item action-menu tab-sections
-activate-copy activate-dbus` i kończy się kodem 0 (zachowana jest też starsza
+modal-closed preview-text preview-image clipboard-item action-menu
+action-menu-anchored action-menu-rightclick tab-sections activate-copy
+activate-dbus` i kończy się kodem 0 (zachowana jest też starsza
 linia bez `window-actions` dla dotychczasowych wrapperów). Wariant `activate-dbus`
 pobiera realny wynik z `org.gnome.Spotlight.Search.Search` i sprawdza
 `parseActions(result).primary.type`; gdy daemon nie odpowiada, krok jest
