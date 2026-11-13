@@ -337,7 +337,11 @@ function descendantActors(actor) {
     } catch {
       children = [];
     }
-    stack.push(...children);
+    // Stack-based traversal has to push children in reverse: popping from the
+    // end otherwise yields reverse paint order, so a "first child" assert
+    // silently compares the LAST painted layer.
+    for (let i = children.length - 1; i >= 0; i--)
+      stack.push(children[i]);
   }
   return actors;
 }
