@@ -75,7 +75,9 @@ def tap(fd, key, shift=False, delay=0.012):
 
 def type_text(fd, text):
     for ch in text:
-        if ch in SHIFTED:
+        if ch == " ":
+            tap(fd, "space")
+        elif ch in SHIFTED:
             tap(fd, SHIFTED[ch], True)
         elif ch.isupper():
             tap(fd, ch.lower(), True)
