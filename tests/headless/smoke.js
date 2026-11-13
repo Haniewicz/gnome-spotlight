@@ -399,6 +399,7 @@ export async function run() {
     assert(modal._rows.length === 0, step, 'rows survived clearing the query');
     modal._entry.set_text('s');
     modal._cancelSearch();
+    modal._setCompact(false);  // kompakt startuje bez listy wyników
     modal.setResults([{
       id: 'smoke-expand',
       title: 'Smoke',
@@ -451,6 +452,7 @@ export async function run() {
         description: previewPath,
       },
     };
+    modal._setCompact(false);  // kompakt startuje bez listy wyników
     modal.setResults([{ id: 'files', title: 'Pliki', results: [fileResult] }]);
     assert(modal._rows.length === 1, step, 'file result was not added');
     assert(modal._selectedResult() === fileResult, step, 'file result is not selected');
@@ -515,6 +517,7 @@ export async function run() {
         description: imagePath,
       },
     };
+    modal._setCompact(false);  // kompakt startuje bez listy wyników
     modal.setResults([{ id: 'files', title: 'Pliki', results: [imageResult] }]);
     assert(modal._rows.length === 1, step, 'image result was not added');
     assert(modal._selectedResult() === imageResult, step, 'image result is not selected');
@@ -599,6 +602,7 @@ export async function run() {
         ],
       },
     };
+    modal._setCompact(false);  // kompakt startuje bez listy wyników
     modal.setResults([{ id: 'smoke', title: 'Smoke', results: [actionResult] }]);
     assert(modal._selectedResult() === actionResult, step, 'action result is not selected');
 
@@ -622,7 +626,8 @@ export async function run() {
       step,
       'preview Akcje button label is not "Akcje ⌃K"'
     );
-    secondaryButton.emit('clicked');
+    // StButton::clicked niesie jeden argument (kliknięty aktor).
+    secondaryButton.emit('clicked', secondaryButton);
     const buttonMenu = modal._actionMenu;
     assert(buttonMenu, step, 'preview Akcje button did not open the action menu');
     assert(
@@ -654,6 +659,7 @@ export async function run() {
       providerId: 'smoke-b',
       title: 'Sekcja B',
     };
+    modal._setCompact(false);  // kompakt startuje bez listy wyników
     modal.setResults([
       { id: 'smoke-a', title: 'Sekcja A', results: [firstSectionResult] },
       { id: 'smoke-b', title: 'Sekcja B', results: [secondSectionResult] },
@@ -672,6 +678,7 @@ export async function run() {
       providerId: 'smoke-c',
       title: 'Sekcja C',
     };
+    modal._setCompact(false);  // kompakt startuje bez listy wyników
     modal.setResults([{
       id: 'smoke-c',
       title: 'Sekcja C',
@@ -711,6 +718,7 @@ export async function run() {
         menu: [],
       }),
     };
+    modal._setCompact(false);  // kompakt startuje bez listy wyników
     modal.setResults([{ id: 'smoke', title: 'Smoke', results: [copyResult] }]);
     assert(modal._selectedResult() === copyResult, step, 'copy result is not selected');
 
