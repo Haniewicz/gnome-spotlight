@@ -16,9 +16,10 @@
     </key>
 
     <key name="max-results" type="i">
-      <default>8</default>
+      <default>10</default>
       <summary>Maximum number of results</summary>
-      <description>Upper bound on the number of results returned for a single query.</description>
+      <description>Upper bound on the number of results returned for a single query (5-20, Spotlight default is 10).</description>
+      <range min="5" max="20"/>
     </key>
 
     <key name="preview-enabled" type="b">

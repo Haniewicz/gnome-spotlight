@@ -29,16 +29,6 @@
   selection-background-color: rgba(53,132,228,0.45);
 }
 
-.spotlight-scope {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: rgba(255,255,255,0.58);
-  background-color: rgba(255,255,255,0.075);
-  border: 1px solid rgba(255,255,255,0.13);
-  border-radius: 6px;
-  padding: 3px 7px;
-}
-
 .spotlight-body {
   min-height: 120px;
 }

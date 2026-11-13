@@ -115,7 +115,7 @@ listę, nie błąd launchera.
 | `Tab` / `Shift+Tab` | następna / poprzednia sekcja (w jednej sekcji: następny / poprzedni wynik) |
 | `Enter` | akcja domyślna |
 | `Ctrl+Enter` | akcja alternatywna (np. kopiuj ścieżkę) |
-| `Space` | Quick Look: podgląd obrazu/PDF/tekstu (ponownie `Space` wraca do listy) |
+| `Ctrl+Space` | Quick Look: podgląd obrazu/PDF/tekstu (ponownie `Ctrl+Space` wraca do listy) |
 | `Ctrl+K` | menu akcji zaznaczonego wyniku |
 | `Ctrl+P` | przypnij/odepnij od „Częste” (flaga w historii użycia) |
 | `Esc` | zamknij modal |
@@ -166,7 +166,7 @@ fallbackiem, więc rozszerzenia nie muszą być włączane razem.
 ## Preferencje
 
 Okno Adwaita pozwala ustawić skrót, włączać/wyłączać providery, wybrać limit
-wyników (suwak 4–12), przełącznik panelu podglądu, monitor otwierania
+wyników (suwak 5–20, domyślnie 10), przełącznik panelu podglądu, monitor otwierania
 (`pointer` / `focused` / `primary`), a także włączyć historię schowka i
 wyczyścić ją przyciskiem „Wyczyść historię”. Osobna sekcja „Indeks ścieżek”
 pozwala edytować listę korzeni (`extra-index-roots`, np. `$HOME/Projects,

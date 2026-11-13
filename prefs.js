@@ -86,7 +86,7 @@ function clampResults(value) {
   const number = Number(value);
   if (!Number.isFinite(number))
     return 8;
-  return Math.max(4, Math.min(12, Math.round(number)));
+  return Math.max(5, Math.min(20, Math.round(number)));
 }
 
 function extraIndexRoots(settings) {
@@ -364,15 +364,15 @@ export default class SpotlightPreferences extends ExtensionPreferences {
     page.add(resultsGroup);
 
     const maxRow = new Adw.ActionRow({
-      title: 'Maksymalna liczba wyników',
-      subtitle: 'Zakres 4–12',
+      title: 'Liczba wyników (Spotlight: 10)',
+      subtitle: 'Zakres 5–20',
     });
     const adjustment = new Gtk.Adjustment({
-      lower: 4,
-      upper: 12,
+      lower: 5,
+      upper: 20,
       step_increment: 1,
       page_increment: 1,
-      value: clampResults(safeGet(() => settings.get_int('max-results'), 8)),
+      value: clampResults(safeGet(() => settings.get_int('max-results'), 10)),
     });
     const scale = new Gtk.Scale({
       orientation: Gtk.Orientation.HORIZONTAL,

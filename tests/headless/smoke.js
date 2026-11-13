@@ -20,9 +20,13 @@ const DAEMON_SEARCH_REPLY = '(aa{sv}s)';
 const MARKERS = [
   'window-actions',
   'modal-open',
+  'compact-default',
+  'expand-on-query',
+  'space-types',
   'modal-typed',
   'modal-esc',
   'modal-closed',
+  'preview-ctrl-space',
   'preview-text',
   'preview-image',
   'clipboard-item',
@@ -356,6 +360,11 @@ export async function run() {
     assert(modal.isOpen === true, step, 'keybinding handler did not open the modal');
     assert(modal.visible === true, step, 'modal is not visible');
 
+    step = 'compact-default';
+    assert(modal._compact === true, step, 'modal did not start compact');
+    assert(modal._body.visible === false, step, 'result body is visible without a query');
+    assert(modal._rows.length === 0, step, 'rows were rendered without a query');
+
     step = 'clipboard-item';
     modal._entry.set_text('cb ');
     const clipboardRow = await waitFor(
@@ -380,6 +389,34 @@ export async function run() {
     // Reopen for the remaining modal and preview checks.
     extension.stateObj._toggle();
     assert(modal.isOpen === true, step, 'modal did not reopen after clipboard check');
+
+    step = 'expand-on-query';
+    modal._entry.set_text('s');
+    assert(modal._body.visible === true, step, 'result body did not expand after typing');
+    assert(modal._compact === false, step, 'modal stayed compact after typing');
+    modal._entry.set_text('');
+    assert(modal._body.visible === false, step, 'result body did not collapse after clearing');
+    assert(modal._rows.length === 0, step, 'rows survived clearing the query');
+    modal._entry.set_text('s');
+    modal._cancelSearch();
+    modal.setResults([{
+      id: 'smoke-expand',
+      title: 'Smoke',
+      results: [{
+        id: 'smoke-expand-result',
+        providerId: 'smoke',
+        title: 'Spotlight smoke',
+      }],
+    }]);
+    assert(modal._rows.length > 0, step, 'no rows after typing the first character');
+
+    step = 'space-types';
+    const spacePropagates = pressKey(modal, Clutter.KEY_space);
+    assert(spacePropagates === Clutter.EVENT_PROPAGATE, step,
+      'plain Space was consumed instead of reaching the entry');
+    modal._entry.set_text('spot light');
+    assert(modal._entry.get_text() === 'spot light', step,
+      `entry text is ${JSON.stringify(modal._entry.get_text())}, expected "spot light"`);
 
     step = 'modal-typed';
     modal._entry.set_text('spo');
@@ -421,13 +458,23 @@ export async function run() {
     const preview = modal._preview;
     assert(preview && preview.visible === true, step, 'preview panel is not visible');
 
-    const previewEvent = modal._onCapturedEvent(modal, {
-      type: () => Clutter.EventType.KEY_PRESS,
-      get_key_symbol: () => Clutter.KEY_space,
-      get_state: () => 0,
-    });
-    assert(previewEvent === Clutter.EVENT_STOP, step, 'Space did not open the text preview');
+    step = 'preview-ctrl-space';
+    const plainPreviewEvent = pressKey(modal, Clutter.KEY_space);
+    assert(plainPreviewEvent === Clutter.EVENT_PROPAGATE, step,
+      'plain Space was consumed instead of typing a space');
+    assert(preview.isPreviewOpen() === false, step, 'plain Space opened the preview');
 
+    const previewEvent = pressKey(
+      modal,
+      Clutter.KEY_space,
+      Clutter.ModifierType.CONTROL_MASK
+    );
+    assert(previewEvent === Clutter.EVENT_STOP, step,
+      'Ctrl+Space did not open the text preview');
+    assert(preview.isPreviewOpen() === true, step,
+      'Ctrl+Space did not mark the text preview as open');
+
+    step = 'preview-text';
     await waitFor(
       () => preview._textScroll.visible &&
         preview._textLabel.get_text().length > 0 &&
@@ -437,14 +484,15 @@ export async function run() {
     assert(preview.height > 0, step, `preview panel height is ${preview.height}`);
     assert(preview._textScroll.height > 0, step, 'text preview has zero height');
 
-    // Space again returns to the metadata/list view instead of closing the
-    // modal; this is the Quick Look toggle contract.
-    const closeTextEvent = modal._onCapturedEvent(modal, {
-      type: () => Clutter.EventType.KEY_PRESS,
-      get_key_symbol: () => Clutter.KEY_space,
-      get_state: () => 0,
-    });
-    assert(closeTextEvent === Clutter.EVENT_STOP, step, 'Space did not close the text preview');
+    // Ctrl+Space again returns to the metadata/list view instead of closing
+    // the modal; this is the Quick Look toggle contract.
+    const closeTextEvent = pressKey(
+      modal,
+      Clutter.KEY_space,
+      Clutter.ModifierType.CONTROL_MASK
+    );
+    assert(closeTextEvent === Clutter.EVENT_STOP, step,
+      'Ctrl+Space did not close the text preview');
     assert(preview.isPreviewOpen() === false, step, 'text preview is still marked open');
     assert(preview._textScroll.visible === false, step, 'text preview is still visible');
 
@@ -471,12 +519,13 @@ export async function run() {
     assert(modal._rows.length === 1, step, 'image result was not added');
     assert(modal._selectedResult() === imageResult, step, 'image result is not selected');
 
-    const imageEvent = modal._onCapturedEvent(modal, {
-      type: () => Clutter.EventType.KEY_PRESS,
-      get_key_symbol: () => Clutter.KEY_space,
-      get_state: () => 0,
-    });
-    assert(imageEvent === Clutter.EVENT_STOP, step, 'Space did not open the image preview');
+    const imageEvent = pressKey(
+      modal,
+      Clutter.KEY_space,
+      Clutter.ModifierType.CONTROL_MASK
+    );
+    assert(imageEvent === Clutter.EVENT_STOP, step,
+      'Ctrl+Space did not open the image preview');
 
     await waitFor(
       () => {

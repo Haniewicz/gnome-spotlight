@@ -51,7 +51,7 @@ EXPECTED_KEYS = {
 EXPECTED_DEFAULTS = {
     "toggle-keybinding": "['<Super>space']",
     "enabled-providers": "['apps','windows','files','settings','commands','calculator']",
-    "max-results": "8",
+    "max-results": "10",
     "preview-enabled": "true",
     "clipboard-enabled": "true",
     "usage-history": "'{}'",
