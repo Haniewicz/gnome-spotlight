@@ -89,6 +89,20 @@ function clampResults(value) {
   return Math.max(5, Math.min(20, Math.round(number)));
 }
 
+function clampOpacityPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number))
+    return 93;
+  return Math.max(50, Math.min(100, Math.round(number * 100)));
+}
+
+function clampBlurRadius(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number))
+    return 24;
+  return Math.max(0, Math.min(48, Math.round(number)));
+}
+
 function extraIndexRoots(settings) {
   const raw = safeGet(
     () => settings.get_strv('extra-index-roots'),
@@ -171,6 +185,103 @@ export default class SpotlightPreferences extends ExtensionPreferences {
       icon_name: 'system-search-symbolic',
     });
     window.add(page);
+
+    // Appearance comes first: opacity and the optional blur are the settings
+    // most often changed right after installation. Both sliders write to
+    // GSettings immediately, so a running launcher updates without a save
+    // button.
+    const appearanceGroup = new Adw.PreferencesGroup({
+      title: 'Wygląd',
+      description: 'Przezroczystość panelu i opcjonalne rozmycie tła pod nim.',
+    });
+    page.add(appearanceGroup);
+
+    const blurRow = new Adw.SwitchRow({
+      title: 'Rozmycie tła (blur)',
+      subtitle: 'Opcjonalne; obciąża GPU, domyślnie wyłączone',
+      active: safeGet(() => settings.get_boolean('blur-enabled'), false),
+    });
+    appearanceGroup.add(blurRow);
+
+    const blurRadiusRow = new Adw.ActionRow({
+      title: 'Promień rozmycia',
+      subtitle: 'Zakres 0–48 px; działa tylko przy włączonym blurze',
+    });
+    const blurRadiusAdjustment = new Gtk.Adjustment({
+      lower: 0,
+      upper: 48,
+      step_increment: 1,
+      page_increment: 4,
+      value: clampBlurRadius(
+        safeGet(() => settings.get_int('blur-radius'), 24)
+      ),
+    });
+    const blurRadiusScale = new Gtk.Scale({
+      orientation: Gtk.Orientation.HORIZONTAL,
+      adjustment: blurRadiusAdjustment,
+      digits: 0,
+      draw_value: true,
+      value_pos: Gtk.PositionType.RIGHT,
+      hexpand: true,
+      width_request: 200,
+      valign: Gtk.Align.CENTER,
+    });
+    blurRadiusScale.set_sensitive(blurRow.get_active());
+    blurRadiusScale.connect('value-changed', () => {
+      if (state.busy)
+        return;
+      safeSet(() => settings.set_int(
+        'blur-radius',
+        clampBlurRadius(blurRadiusScale.get_value())
+      ));
+    });
+    blurRadiusRow.add_suffix(blurRadiusScale);
+    blurRadiusRow.set_activatable_widget(blurRadiusScale);
+    appearanceGroup.add(blurRadiusRow);
+
+    const opacityRow = new Adw.ActionRow({
+      title: 'Krycie panelu',
+      subtitle: 'Zakres 50–100%; 100% to panel nieprzezroczysty',
+    });
+    const opacityAdjustment = new Gtk.Adjustment({
+      lower: 50,
+      upper: 100,
+      step_increment: 1,
+      page_increment: 5,
+      value: clampOpacityPercent(
+        safeGet(() => settings.get_double('panel-opacity'), 0.93)
+      ),
+    });
+    const opacityScale = new Gtk.Scale({
+      orientation: Gtk.Orientation.HORIZONTAL,
+      adjustment: opacityAdjustment,
+      digits: 0,
+      draw_value: true,
+      value_pos: Gtk.PositionType.RIGHT,
+      hexpand: true,
+      width_request: 200,
+      valign: Gtk.Align.CENTER,
+    });
+    opacityScale.connect('value-changed', () => {
+      if (state.busy)
+        return;
+      const percent = Math.max(
+        50,
+        Math.min(100, Math.round(opacityScale.get_value()))
+      );
+      safeSet(() => settings.set_double('panel-opacity', percent / 100));
+    });
+    opacityRow.add_suffix(opacityScale);
+    opacityRow.set_activatable_widget(opacityScale);
+    appearanceGroup.add(opacityRow);
+
+    blurRow.connect('notify::active', () => {
+      const active = blurRow.get_active();
+      blurRadiusScale.set_sensitive(active);
+      if (state.busy)
+        return;
+      safeSet(() => settings.set_boolean('blur-enabled', active));
+    });
 
     const shortcutGroup = new Adw.PreferencesGroup({
       title: 'Skrót',

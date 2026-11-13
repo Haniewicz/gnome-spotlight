@@ -9,6 +9,13 @@
   color: #ffffff;
 }
 
+/* Optional backdrop actor: the blur effect is attached at runtime only when
+ * the blur-enabled setting is on. The translucent dark veil keeps the text
+ * readable over bright windows. */
+.spotlight-blur-backdrop {
+  border-radius: 18px;
+}
+
 .spotlight-search-row {
   padding: 18px 20px 16px 22px;
   border-bottom: 1px solid rgba(255,255,255,0.09);

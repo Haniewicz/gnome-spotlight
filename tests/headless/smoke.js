@@ -26,9 +26,13 @@ const MARKERS = [
   'modal-typed',
   'modal-esc',
   'modal-closed',
+  'preview-hidden-default',
+  'preview-sidebar-toggle',
   'preview-ctrl-space',
   'preview-text',
   'preview-image',
+  'blur-off-by-default',
+  'blur-applied',
   'clipboard-item',
   'action-menu',
   'action-menu-anchored',
@@ -362,6 +366,10 @@ export async function run() {
     assert(modal.isOpen === true, step, 'keybinding handler did not open the modal');
     assert(modal.visible === true, step, 'modal is not visible');
 
+    step = 'blur-off-by-default';
+    assert(modal._panelBlurActor === null, step,
+      'blur backdrop exists before blur-enabled was turned on');
+
     step = 'compact-default';
     assert(modal._compact === true, step, 'modal did not start compact');
     assert(modal._body.visible === false, step, 'result body is visible without a query');
@@ -460,9 +468,20 @@ export async function run() {
     assert(modal._selectedResult() === fileResult, step, 'file result is not selected');
 
     const preview = modal._preview;
-    assert(preview && preview.visible === true, step, 'preview panel is not visible');
 
-    step = 'preview-ctrl-space';
+    step = 'preview-hidden-default';
+    assert(preview && preview.visible === false, step,
+      'preview sidebar is visible before Ctrl+Space');
+    assert(modal._previewVisible === false, step,
+      'preview visibility state is not reset on a new query');
+    await waitFor(
+      () => modal.width > 0 &&
+        modal._body.width >= modal.width - 4 &&
+        modal._results.width === modal._body.width,
+      'result list to occupy the full modal width while the sidebar is hidden'
+    );
+
+    step = 'preview-sidebar-toggle';
     const plainPreviewEvent = pressKey(modal, Clutter.KEY_space);
     assert(plainPreviewEvent === Clutter.EVENT_PROPAGATE, step,
       'plain Space was consumed instead of typing a space');
@@ -475,6 +494,11 @@ export async function run() {
     );
     assert(previewEvent === Clutter.EVENT_STOP, step,
       'Ctrl+Space did not open the text preview');
+    assert(modal._previewVisible === true, step,
+      'Ctrl+Space did not mark the sidebar as visible');
+    assert(preview.visible === true, step,
+      'Ctrl+Space did not show the preview sidebar');
+    assert(preview._model, step, 'Ctrl+Space did not fill the preview model');
     assert(preview.isPreviewOpen() === true, step,
       'Ctrl+Space did not mark the text preview as open');
 
@@ -487,18 +511,28 @@ export async function run() {
     );
     assert(preview.height > 0, step, `preview panel height is ${preview.height}`);
     assert(preview._textScroll.height > 0, step, 'text preview has zero height');
+    assert(modal._results.width < modal._body.width, step,
+      'result list did not shrink to make room for the preview sidebar');
 
-    // Ctrl+Space again returns to the metadata/list view instead of closing
-    // the modal; this is the Quick Look toggle contract.
+    // Ctrl+Space again hides the sidebar and returns the list to full width;
+    // it does not close the modal.
+    step = 'preview-sidebar-toggle';
     const closeTextEvent = pressKey(
       modal,
       Clutter.KEY_space,
       Clutter.ModifierType.CONTROL_MASK
     );
     assert(closeTextEvent === Clutter.EVENT_STOP, step,
-      'Ctrl+Space did not close the text preview');
+      'Ctrl+Space did not close the preview sidebar');
+    assert(modal._previewVisible === false, step,
+      'the second Ctrl+Space did not hide the sidebar state');
+    assert(preview.visible === false, step, 'preview sidebar is still visible');
     assert(preview.isPreviewOpen() === false, step, 'text preview is still marked open');
     assert(preview._textScroll.visible === false, step, 'text preview is still visible');
+    await waitFor(
+      () => modal._results.width === modal._body.width,
+      'result list to return to the full modal width'
+    );
 
     step = 'preview-image';
     const imagePath = writeSmokePng();
@@ -607,6 +641,18 @@ export async function run() {
     modal._setCompact(false);  // kompakt startuje bez listy wyników
     modal.setResults([{ id: 'smoke', title: 'Smoke', results: [actionResult] }]);
     assert(modal._selectedResult() === actionResult, step, 'action result is not selected');
+
+    // The sidebar is hidden by default; open it so its Akcje button has the
+    // action-menu callback installed by _updatePreview().
+    const actionPreviewEvent = pressKey(
+      modal,
+      Clutter.KEY_space,
+      Clutter.ModifierType.CONTROL_MASK
+    );
+    assert(actionPreviewEvent === Clutter.EVENT_STOP, step,
+      'Ctrl+Space did not open the preview for the action menu check');
+    assert(modal._preview.visible === true, step,
+      'preview sidebar is not visible for the action menu check');
 
     // Clutter only delivers pointer events to reactive actors; a non-reactive
     // St.Button must not turn a release into a click.
@@ -722,6 +768,37 @@ export async function run() {
     assert(singleTab === Clutter.EVENT_STOP, step, 'Tab was not consumed in one section');
     assert(modal._selectedIndex === 1, step,
       `Tab in one section did not move by one (index ${modal._selectedIndex})`);
+
+    step = 'blur-off-by-default';
+    assert(modal._panelBlurActor === null, step,
+      'blur backdrop appeared without blur-enabled');
+
+    step = 'blur-applied';
+    const modalSettings = extension.stateObj._settings;
+    assert(modalSettings, step, 'extension settings are unavailable');
+    modalSettings.set_int('blur-radius', 32);
+    modalSettings.set_boolean('blur-enabled', true);
+    const blurEffect = await waitFor(
+      () => {
+        const effects = modal._panelBlurActor?.get_effects?.() ?? [];
+        return effects.find(effect => Number(effect.radius) === 32) ?? null;
+      },
+      'Shell.BlurEffect with radius 32 on the panel backdrop'
+    );
+    assert(blurEffect, step, 'panel backdrop has no BlurEffect');
+    assert(modal._panelBlurActor.visible === true, step,
+      'panel backdrop actor is hidden');
+    assert(modal._panelBlurActor.get_parent() === modal._panel, step,
+      'panel backdrop actor is not inside the modal actor tree');
+
+    // Turning the setting off must remove the effect entirely, not just hide
+    // the actor.
+    modalSettings.set_boolean('blur-enabled', false);
+    await waitFor(
+      () => modal._panelBlurActor === null,
+      'blur backdrop removal after blur-enabled=false'
+    );
+
     modal.close();
 
     step = 'activate-copy';

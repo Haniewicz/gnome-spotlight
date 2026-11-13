@@ -46,6 +46,9 @@ EXPECTED_KEYS = {
     "extra-index-roots": "as",
     "path-index-max-entries": "i",
     "remote-providers-enabled": "b",
+    "panel-opacity": "d",
+    "blur-enabled": "b",
+    "blur-radius": "i",
 }
 
 EXPECTED_DEFAULTS = {
@@ -61,6 +64,9 @@ EXPECTED_DEFAULTS = {
     "extra-index-roots": "['$HOME/Projects', '$HOME/Dokumenty']",
     "path-index-max-entries": "200000",
     "remote-providers-enabled": "true",
+    "panel-opacity": "0.93",
+    "blur-enabled": "false",
+    "blur-radius": "24",
 }
 
 # These modules are PURE by DESIGN §3: they must never import the shell or GI.
@@ -76,6 +82,7 @@ PURE_MODULES = [
     "lib/files-parse.js",
     "lib/tracker-query.js",
     "lib/preview-model.js",
+    "lib/panel-style.js",
     "lib/window-actions.js",
     "lib/path-index.js",
     "lib/providers/registry.js",
@@ -106,6 +113,7 @@ REQUIRED_FILES = [
     "lib/files-parse.js",
     "lib/tracker-query.js",
     "lib/preview-model.js",
+    "lib/panel-style.js",
     "lib/window-actions.js",
     "lib/path-index.js",
     "lib/providers/files.js",
@@ -148,6 +156,7 @@ REQUIRED_FILES = [
     "tests/js/files-parse.test.js",
     "tests/js/tracker-query.test.js",
     "tests/js/preview-model.test.js",
+    "tests/js/panel-style.test.js",
     "tests/js/window-actions.test.js",
     "tests/js/clipboard-store.test.js",
     "tests/js/ranking-path.test.js",

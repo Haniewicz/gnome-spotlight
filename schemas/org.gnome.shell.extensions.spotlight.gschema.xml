@@ -25,7 +25,27 @@
     <key name="preview-enabled" type="b">
       <default>true</default>
       <summary>Show the preview pane</summary>
-      <description>Whether the result preview column is rendered.</description>
+      <description>Whether the result preview column is available. The sidebar stays hidden until Ctrl+Space.</description>
+    </key>
+
+    <key name="panel-opacity" type="d">
+      <default>0.93</default>
+      <summary>Panel opacity</summary>
+      <description>Opacity of the launcher panel background, from 0.5 (mostly transparent) to 1.0 (opaque).</description>
+      <range min="0.5" max="1.0"/>
+    </key>
+
+    <key name="blur-enabled" type="b">
+      <default>false</default>
+      <summary>Blur the panel background</summary>
+      <description>Draw a Shell.BlurEffect backdrop behind the panel. Disabled by default because it costs GPU time.</description>
+    </key>
+
+    <key name="blur-radius" type="i">
+      <default>24</default>
+      <summary>Blur radius</summary>
+      <description>Radius of the optional background blur, in pixels (0-48).</description>
+      <range min="0" max="48"/>
     </key>
 
     <key name="clipboard-enabled" type="b">

@@ -115,10 +115,10 @@ listę, nie błąd launchera.
 | `Tab` / `Shift+Tab` | następna / poprzednia sekcja (w jednej sekcji: następny / poprzedni wynik) |
 | `Enter` | akcja domyślna |
 | `Ctrl+Enter` | akcja alternatywna (np. kopiuj ścieżkę) |
-| `Ctrl+Space` | Quick Look: podgląd obrazu/PDF/tekstu (ponownie `Ctrl+Space` wraca do listy) |
+| `Ctrl+Space` | rozwija panel podglądu (sidebar) dla zaznaczonego wyniku; drugie `Ctrl+Space` zwija go z powrotem |
 | `Ctrl+K` | menu akcji zaznaczonego wyniku |
 | `Ctrl+P` | przypnij/odepnij od „Częste” (flaga w historii użycia) |
-| `Esc` | zamknij modal |
+| `Esc` | w podglądzie zwija sidebar, poza nim zamyka modal |
 
 Menu akcji zawiera tylko akcje możliwe do wykonania; np. „Uruchom w terminalu”
 jest wyszarzone, gdy nie ma zainstalowanego terminala. Zamknięcie menu nie
@@ -173,6 +173,29 @@ pozwala edytować listę korzeni (`extra-index-roots`, np. `$HOME/Projects,
 $HOME/Dokumenty`) i ustawić maksimum wpisów suwakiem 50 000–500 000
 (`path-index-max-entries`, domyślnie 200 000). Wszystkie wartości są zapisywane
 przez `this.getSettings()`; puste lub uszkodzone wartości nie powodują wyjątków.
+
+## Wygląd
+
+Panel startuje jako wąska lista wyników — sidebar podglądu jest domyślnie
+ukryty i nie rezerwuje miejsca (lista ma pełną szerokość modala). Rozwija go
+dopiero `Ctrl+Space`; to samo skrócenie albo `Esc` zwija panel z powrotem.
+
+Na początku okna preferencji znajduje się grupa **„Wygląd”**:
+
+![Panel Spotlight z podglądem wyniku](mockup/spotlight-results.png)
+
+- **Krycie panelu** — suwak 50–100% (`panel-opacity`, domyślnie 93%);
+  natychmiast zmienia `rgba(26,27,34,<krycie>)` tła panelu,
+- **Rozmycie tła (blur)** — opcjonalny przełącznik (`blur-enabled`, domyślnie
+  wyłączony),
+- **Promień rozmycia** — suwak 0–48 px (`blur-radius`, domyślnie 24), aktywny
+  tylko przy włączonym blurze.
+
+Blur korzysta z `Shell.BlurEffect` (GNOME Shell 51) i rozmywa to, co jest pod
+panelem, a półprzezroczysta ciemna warstwa (`1 - panel-opacity + 0.15`) chroni
+czytelność tekstu. Jest **wyłączony domyślnie**, bo rozmycie w czasie
+rzeczywistym zużywa GPU i może obciążać słabsze karty; w razie potrzeby obniż
+promień. Wszystkie trzy ustawienia działają na żywo, bez przycisku „Zapisz”.
 
 ## Natywne providery GNOME
 
