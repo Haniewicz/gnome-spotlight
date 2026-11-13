@@ -336,6 +336,33 @@ def check_metadata() -> None:
         ok("metadata.json (uuid, shell-version 51, settings-schema)")
 
 
+PREFS_API_IMPORT = "resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js"
+PREFS_API_WRONG = "resource:///org/gnome/shell/extensions/prefs.js"
+
+
+def check_prefs_api_import() -> None:
+    """prefs.js musi importować API preferencji z poprawnej ścieżki GResource.
+
+    Shell wystawia `org/gnome/Shell/Extensions/js/extensions/prefs.js` (wielkie S
+    i katalog `js`); wersja z małym `shell` istnieje tylko jako `extension.js`,
+    więc zły import daje „Failed to open preferences: ImportError" dopiero przy
+    kliknięciu ustawień — czyli po instalacji, nie w testach.
+    """
+    path = ROOT / "prefs.js"
+    if not path.is_file():
+        fail("prefs.js is missing")
+        return
+
+    content = read_text(path)
+    if PREFS_API_WRONG in content and PREFS_API_IMPORT not in content:
+        fail(f"prefs.js imports {PREFS_API_WRONG!r} (correct: {PREFS_API_IMPORT!r})")
+        return
+    if PREFS_API_IMPORT not in content:
+        fail(f"prefs.js does not import ExtensionPreferences from {PREFS_API_IMPORT!r}")
+        return
+    ok("prefs.js imports the Shell preferences API from the correct resource path")
+
+
 def check_schema() -> None:
     path = SCHEMAS_DIR / "org.gnome.shell.extensions.spotlight.gschema.xml"
     if not path.is_file():
@@ -613,6 +640,7 @@ def main() -> int:
     check_metadata()
     check_stylesheet()
     check_schema()
+    check_prefs_api_import()
     check_pure_modules()
     check_daemon_isolation()
     check_extension_esm()
