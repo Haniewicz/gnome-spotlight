@@ -112,7 +112,7 @@ listę, nie błąd launchera.
 | Klawisz | Akcja |
 |---|---|
 | `↑` / `↓` | wybór wyniku |
-| `Tab` / `Shift+Tab` | następna / poprzednia sekcja |
+| `Tab` / `Shift+Tab` | następna / poprzednia sekcja (w jednej sekcji: następny / poprzedni wynik) |
 | `Enter` | akcja domyślna |
 | `Ctrl+Enter` | akcja alternatywna (np. kopiuj ścieżkę) |
 | `Space` | Quick Look: podgląd obrazu/PDF/tekstu (ponownie `Space` wraca do listy) |
@@ -122,7 +122,8 @@ listę, nie błąd launchera.
 
 Menu akcji zawiera tylko akcje możliwe do wykonania; np. „Uruchom w terminalu”
 jest wyszarzone, gdy nie ma zainstalowanego terminala. Zamknięcie menu nie
-zamyka modala.
+zamyka modala. Ten sam panel otwiera przycisk `Akcje ⌃K` w podglądzie wyniku;
+`Ctrl+Enter` nadal wykonuje akcję alternatywną (np. „Kopiuj ścieżkę”).
 
 ### Akcje z daemona
 
@@ -318,9 +319,9 @@ bash tools/headless-smoke.sh
 ```
 
 Skrypt wypisuje `PASS: window-actions modal-open modal-typed modal-esc
-modal-closed preview-text preview-image clipboard-item activate-copy
-activate-dbus` i kończy się kodem 0 (zachowana jest też starsza linia bez
-`window-actions` dla dotychczasowych wrapperów). Wariant `activate-dbus`
+modal-closed preview-text preview-image clipboard-item action-menu tab-sections
+activate-copy activate-dbus` i kończy się kodem 0 (zachowana jest też starsza
+linia bez `window-actions` dla dotychczasowych wrapperów). Wariant `activate-dbus`
 pobiera realny wynik z `org.gnome.Spotlight.Search.Search` i sprawdza
 `parseActions(result).primary.type`; gdy daemon nie odpowiada, krok jest
 pomijany, a znacznik nie trafia do linii `PASS`. Gdy w środowisku brakuje

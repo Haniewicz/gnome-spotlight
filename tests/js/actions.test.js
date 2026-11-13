@@ -25,23 +25,63 @@ test('menu model preserves provider order', () => {
   ]);
 });
 
-test('items without a callback are disabled', () => {
+test('a declarative descriptor without a callback stays enabled', () => {
   const items = buildActionMenu({
     actions: {
       menu: [
-        { id: 'ok', label: 'Działa', callback: () => {} },
-        { id: 'broken', label: 'Nie działa' },
-        { id: 'disabled', label: 'Wyłączona', callback: () => {}, disabled: true },
-        { id: 'off', label: 'Wyłączona 2', callback: () => {}, enabled: false },
+        { id: 'launch', type: 'app', label: 'Uruchom', appId: 'org.gnome.Settings' },
+        { id: 'copy', label: 'Kopiuj', callback: () => {} },
+        { id: 'disabled', label: 'Wyłączona', disabled: true },
+        { id: 'off', label: 'Wyłączona 2', enabled: false },
       ],
     },
   });
 
   assertEqual(items.length, 4);
   assertFalse(items[0].disabled);
-  assertTrue(items[1].disabled);
+  assertEqual(items[0].descriptor.type, 'app');
+  assertFalse(items[1].disabled);
   assertTrue(items[2].disabled);
   assertTrue(items[3].disabled);
+});
+
+test('enabled:false disables an otherwise executable descriptor', () => {
+  const items = buildActionMenu({
+    actions: {
+      menu: [
+        { id: 'tile-left', type: 'app', label: 'Przytnij w lewo', enabled: true },
+        { id: 'close', type: 'app', label: 'Zamknij', enabled: false },
+      ],
+    },
+  });
+
+  assertEqual(items.length, 2);
+  assertFalse(items[0].disabled);
+  assertTrue(items[1].disabled);
+});
+
+test('actions wrapped in a Variant with a JSON string are parsed', () => {
+  class FakeVariant {
+    constructor(value) {
+      this.value = value;
+    }
+
+    deepUnpack() {
+      return this.value;
+    }
+  }
+
+  const actions = JSON.stringify({
+    menu: [
+      { id: 'launch', type: 'app', label: 'Uruchom' },
+      { id: 'copy-path', type: 'copy', label: 'Kopiuj ścieżkę' },
+    ],
+  });
+  const items = buildActionMenu({ actions: new FakeVariant(actions) });
+
+  assertDeepEqual(labels(items), ['Uruchom', 'Kopiuj ścieżkę']);
+  assertEqual(items[0].descriptor.type, 'app');
+  assertFalse(items[0].disabled);
 });
 
 test('a function entry is disabled because it has no label', () => {
@@ -51,6 +91,7 @@ test('a function entry is disabled because it has no label', () => {
 
 test('an empty or missing menu means no menu', () => {
   assertDeepEqual(buildActionMenu({ actions: { menu: [] } }), []);
+  assertDeepEqual(buildActionMenu({ actions: { menu: [] } }, { parse: r => r.actions }), []);
   assertDeepEqual(buildActionMenu({ actions: {} }), []);
   assertDeepEqual(buildActionMenu({}), []);
   assertDeepEqual(buildActionMenu(null), []);

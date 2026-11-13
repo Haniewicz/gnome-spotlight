@@ -26,6 +26,8 @@ const MARKERS = [
   'preview-text',
   'preview-image',
   'clipboard-item',
+  'action-menu',
+  'tab-sections',
   'activate-copy',
   'activate-dbus',
 ];
@@ -269,6 +271,20 @@ function pressEscape(modal) {
   });
 }
 
+function pressKey(modal, symbol, state = 0) {
+  return modal._onCapturedEvent(modal, {
+    type: () => Clutter.EventType.KEY_PRESS,
+    get_key_symbol: () => symbol,
+    get_state: () => state,
+  });
+}
+
+function actionMenuItems(menu) {
+  if (typeof menu?._getMenuItems === 'function')
+    return menu._getMenuItems();
+  return menu?.box?.get_children?.() ?? [];
+}
+
 /**
  * Headless smoke script run by gnome-shell --automation-script.
  *
@@ -487,6 +503,140 @@ export async function run() {
     assert(result === Clutter.EVENT_STOP, step, 'Escape was not consumed by the modal');
     assert(modal.isOpen === false, step, 'modal is still open after Escape');
     assert(modal.visible === false, step, 'modal is still visible after Escape');
+
+    step = 'action-menu';
+    extension.stateObj._toggle();
+    assert(modal.isOpen === true, step, 'modal did not reopen for the action menu');
+    modal._cancelSearch();
+    const actionResult = {
+      id: 'smoke-actions',
+      providerId: 'smoke',
+      title: 'SMOKE MENU',
+      subtitle: 'deskryptory akcji',
+      kind: 'Test',
+      icon: 'application-x-executable-symbolic',
+      actions: JSON.stringify({
+        primary: {
+          id: 'launch',
+          label: 'Uruchom',
+          type: 'app',
+          appId: 'org.gnome.Settings',
+        },
+        secondary: {
+          id: 'copy-path',
+          label: 'Kopiuj ścieżkę',
+          type: 'copy',
+          text: 'SMOKE MENU',
+        },
+        menu: [
+          {
+            id: 'launch',
+            label: 'Uruchom',
+            type: 'app',
+            appId: 'org.gnome.Settings',
+          },
+          {
+            id: 'copy-path',
+            label: 'Kopiuj ścieżkę',
+            type: 'copy',
+            text: 'SMOKE MENU',
+          },
+        ],
+      }),
+      preview: {
+        rows: [
+          ['Akcje', '2'],
+          ['Typ', 'deskryptory'],
+        ],
+      },
+    };
+    modal.setResults([{ id: 'smoke', title: 'Smoke', results: [actionResult] }]);
+    assert(modal._selectedResult() === actionResult, step, 'action result is not selected');
+
+    // Clutter only delivers pointer events to reactive actors; a non-reactive
+    // St.Button must not turn a release into a click.
+    const inertButton = new St.Button({ reactive: false, can_focus: true });
+    let inertClicks = 0;
+    inertButton.connect('clicked', () => {
+      inertClicks++;
+    });
+    inertButton.fake_release();
+    assert(inertClicks === 0, step, 'reactive:false St.Button emitted clicked');
+    inertButton.destroy();
+
+    // The preview's Akcje button must therefore be reactive and wired to the
+    // menu callback.
+    const secondaryButton = modal._preview?._secondaryButton;
+    assert(secondaryButton?.reactive === true, step, 'preview Akcje button is not reactive');
+    assert(
+      modal._preview?._secondaryLabel?.get_text?.() === 'Akcje ⌃K',
+      step,
+      'preview Akcje button label is not "Akcje ⌃K"'
+    );
+    secondaryButton.emit('clicked');
+    const buttonMenu = modal._actionMenu;
+    assert(buttonMenu, step, 'preview Akcje button did not open the action menu');
+    assert(
+      actionMenuItems(buttonMenu).length >= 2,
+      step,
+      'preview Akcje button opened a menu with fewer than two items'
+    );
+    modal._closeActionMenu();
+
+    const menuKey = pressKey(modal, Clutter.KEY_k, Clutter.ModifierType.CONTROL_MASK);
+    assert(menuKey === Clutter.EVENT_STOP, step, 'Ctrl+K was not consumed');
+    const menu = modal._actionMenu;
+    assert(menu, step, 'Ctrl+K did not open the action menu');
+    const menuItems = actionMenuItems(menu);
+    assert(menuItems.length >= 2, step,
+      `action menu has ${menuItems.length} items, expected at least 2`);
+    assert(menuItems[0].sensitive === true, step,
+      'first action menu item is not sensitive');
+    modal._closeActionMenu();
+
+    step = 'tab-sections';
+    const firstSectionResult = {
+      id: 'smoke-section-a',
+      providerId: 'smoke-a',
+      title: 'Sekcja A',
+    };
+    const secondSectionResult = {
+      id: 'smoke-section-b',
+      providerId: 'smoke-b',
+      title: 'Sekcja B',
+    };
+    modal.setResults([
+      { id: 'smoke-a', title: 'Sekcja A', results: [firstSectionResult] },
+      { id: 'smoke-b', title: 'Sekcja B', results: [secondSectionResult] },
+    ]);
+    assert(modal._sections.length === 2, step,
+      `expected two sections, got ${modal._sections.length}`);
+    assert(modal._selectedIndex === 0, step,
+      `expected selection in the first section, got ${modal._selectedIndex}`);
+    const tab = pressKey(modal, Clutter.KEY_Tab);
+    assert(tab === Clutter.EVENT_STOP, step, 'Tab was not consumed');
+    assert(modal._selectedIndex === modal._sections[1].firstIndex, step,
+      `Tab did not move to the second section (index ${modal._selectedIndex})`);
+
+    const singleSectionResult = {
+      id: 'smoke-section-c',
+      providerId: 'smoke-c',
+      title: 'Sekcja C',
+    };
+    modal.setResults([{
+      id: 'smoke-c',
+      title: 'Sekcja C',
+      results: [firstSectionResult, singleSectionResult],
+    }]);
+    assert(modal._sections.length === 1, step,
+      `expected one section, got ${modal._sections.length}`);
+    assert(modal._selectedIndex === 0, step,
+      `expected selection at the first row, got ${modal._selectedIndex}`);
+    const singleTab = pressKey(modal, Clutter.KEY_Tab);
+    assert(singleTab === Clutter.EVENT_STOP, step, 'Tab was not consumed in one section');
+    assert(modal._selectedIndex === 1, step,
+      `Tab in one section did not move by one (index ${modal._selectedIndex})`);
+    modal.close();
 
     step = 'activate-copy';
     extension.stateObj._toggle();
