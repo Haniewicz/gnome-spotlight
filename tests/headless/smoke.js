@@ -1161,7 +1161,7 @@ export async function run() {
         () => modal._panelBlurLayer,
         'panel blur layer'
       );
-      const blurEffect = (modal._panelBlurActor?.get_effects?.() ?? [])
+      const blurEffect = (modal._panelBlurHost?.get_effects?.() ?? [])
         .find(effect => effect instanceof Shell.BlurEffect) ?? null;
       assert(blurEffect, step, 'panel backdrop has no Shell.BlurEffect');
       assert(Number(blurEffect.radius) === 32, step,
@@ -1172,14 +1172,17 @@ export async function run() {
       assert(modal._panelBlurActor.get_parent() === modal._panel, step,
         'panel backdrop container is not inside the modal actor tree');
       assert(modal._panelBlurActor.get_child_at_index?.(0) ===
+        modal._panelBlurHost, step,
+        'blur host is not the first backdrop child');
+      assert(modal._panelBlurHost.get_child_at_index?.(0) ===
         modal._panelBlurClone, step,
-        'background clone is not the first backdrop child');
+        'background clone is not the first blur-host child');
       assert(modal._panelBlurVeil, step, 'panel blur veil is missing');
       assert(modal._panelBlurVeil.get_parent() === modal._panelBlurActor, step,
         'panel blur veil is not inside the masked backdrop');
-      assert(modal._panelBlurActor.get_child_at_index?.(2) ===
+      assert(modal._panelBlurActor.get_child_at_index?.(1) ===
         modal._panelBlurVeil, step,
-        'panel blur veil is not above both blurred clones');
+        'panel blur veil is not above the blurred clones');
 
       step = 'veil-rounded';
       const veilEffects = modal._panelBlurVeil.get_effects?.() ?? [];
@@ -1197,13 +1200,15 @@ export async function run() {
       const layerClones = descendantActors(blurLayer).filter(child =>
         typeof child?.get_source === 'function'
       );
-      assert(layerChildren.length === 3, step,
+      assert(layerChildren.length === 2, step,
         `panel blur layer has ${layerChildren.length} children, ` +
-          'expected 2 clones + veil');
+          'expected blur host + veil');
       assert(layerClones.length === 2, step,
         `panel blur layer has ${layerClones.length} clones, expected 2`);
-      assert(layerChildren[0] === modal._panelBlurClone, step,
-        'background clone is not the first layer child');
+      assert(layerChildren[0] === modal._panelBlurHost, step,
+        'first layer child is not the blur host');
+      assert(modal._panelBlurClone.get_parent() === modal._panelBlurHost, step,
+        'background clone is not inside the blur host');
       const sources = cloneSources(blurLayer);
       const backgroundSource = sources[0];
       assert(
@@ -1234,15 +1239,21 @@ export async function run() {
         'window clone offset is not negative');
 
       step = 'blur-mask-effect';
+      // Blur sits on the inner host and the rounded mask on the outer actor:
+      // that fixes the effect order, so the mask always clips the blurred
+      // composite instead of being blurred afterwards (square corner scraps).
       const layerEffects = modal._panelBlurActor?.get_effects?.() ?? [];
-      assert(layerEffects.length === 2, step,
-        `backdrop container has ${layerEffects.length} effects, expected 2`);
-      assert(layerEffects[0] instanceof Shell.BlurEffect, step,
-        'first backdrop effect is not Shell.BlurEffect');
-      assert(layerEffects[1] instanceof Clutter.ShaderEffect, step,
-        'second backdrop effect is not Clutter.ShaderEffect');
-      assert(modal._panelBlurMask === layerEffects[1], step,
+      const hostEffects = modal._panelBlurHost?.get_effects?.() ?? [];
+      assert(layerEffects.length === 1, step,
+        `masked container has ${layerEffects.length} effects, expected 1 (mask)`);
+      assert(layerEffects[0] instanceof Clutter.ShaderEffect, step,
+        'outer container effect is not Clutter.ShaderEffect');
+      assert(modal._panelBlurMask === layerEffects[0], step,
         'modal does not reference the attached rounded mask');
+      assert(hostEffects.length === 1, step,
+        `blur host has ${hostEffects.length} effects, expected 1 (blur)`);
+      assert(hostEffects[0] instanceof Shell.BlurEffect, step,
+        'blur host effect is not Shell.BlurEffect');
 
       step = 'blur-mask-radius';
       const maskRadius = Number(
