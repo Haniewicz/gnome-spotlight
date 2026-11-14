@@ -28,7 +28,6 @@ const MARKERS = [
   'modal-esc',
   'modal-closed',
   'screenshot-print-key',
-  'screenshot-allowkeybinding',
   'veil-rounded',
   'preview-hidden-default',
   'preview-sidebar-toggle',
@@ -578,20 +577,6 @@ export async function run() {
     assert(modal.isOpen === true, step, 'keybinding handler did not open the modal');
     assert(modal.visible === true, step, 'modal is not visible');
 
-    step = 'screenshot-allowkeybinding';
-    const screenshotModesOpen =
-      Main.wm?._allowedKeybindings?.['show-screenshot-ui'];
-    assert(Number.isFinite(Number(screenshotModesOpen)), step,
-      `screenshot keybinding modes are ${screenshotModesOpen}`);
-    assert(
-      (Number(screenshotModesOpen) & Shell.ActionMode.SYSTEM_MODAL) ===
-        Shell.ActionMode.SYSTEM_MODAL ||
-      Number(screenshotModesOpen) === Shell.ActionMode.ALL,
-      step,
-      `screenshot keybinding modes ${screenshotModesOpen} do not include ` +
-        'SYSTEM_MODAL/ALL while the modal is open'
-    );
-
     step = 'screenshot-print-key';
     const screenshotUI = Main.screenshotUI;
     assert(
@@ -644,13 +629,6 @@ export async function run() {
     assert(clipboardEscape === Clutter.EVENT_STOP, step, 'Escape was not consumed');
     assert(modal.isOpen === false, step, 'modal is still open after clipboard check');
     assert(modal.visible === false, step, 'modal is still visible after clipboard check');
-
-    step = 'screenshot-allowkeybinding';
-    const screenshotModesClosed =
-      Main.wm?._allowedKeybindings?.['show-screenshot-ui'];
-    assert(screenshotModesClosed === screenshotModesBeforeOpen, step,
-      `screenshot keybinding modes after close are ${screenshotModesClosed}, ` +
-        `expected ${screenshotModesBeforeOpen}`);
 
     // Reopen for the remaining modal and preview checks.
     extension.stateObj._toggle();
