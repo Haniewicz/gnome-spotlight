@@ -118,6 +118,8 @@ listę, nie błąd launchera.
 | `Ctrl+Space` | rozwija panel podglądu (sidebar) dla zaznaczonego wyniku; drugie `Ctrl+Space` zwija go z powrotem |
 | `Ctrl+K` | menu akcji zaznaczonego wyniku |
 | `Ctrl+P` | przypnij/odepnij od „Częste” (flaga w historii użycia) |
+| `Print` | otwiera systemowy interfejs zrzutu ekranu także przy otwartym launcherze |
+| `Ctrl+Print` | zapisuje pełny zrzut do `~/Pictures/Spotlight-RRRRMMDD-GGMMSS.png` (fallback: katalog domowy) |
 | `Esc` | w podglądzie zwija sidebar, poza nim zamyka modal |
 
 Menu akcji zawiera tylko akcje możliwe do wykonania; np. „Uruchom w terminalu”
@@ -195,12 +197,23 @@ Blur korzysta z `Shell.BlurEffect` (GNOME Shell 51) i rozmywa to, co jest pod
 panelem: klonuje dwie warstwy — tapetę (`Main.layoutManager._backgroundGroup`)
 i okna (`global.window_group`) — do kontenera o rozmiarze panelu. Maska
 `Clutter.ShaderEffect` zaokrągla rogi (18 px), a półprzezroczysta ciemna
-warstwa (`1 - panel-opacity + 0.15`) chroni czytelność tekstu. Kontener tła nie
-wpływa na wysokość panelu; jeśli shader się nie skompiluje, blur jest wyłączany
-i zostaje sam półprzezroczysty panel. Jest **wyłączony domyślnie**, bo rozmycie
-w czasie rzeczywistym zużywa GPU i może obciążać słabsze karty; w razie potrzeby
-obniż promień. Wszystkie trzy ustawienia działają na żywo, bez przycisku
-„Zapisz”.
+warstwa (`1 - panel-opacity + 0.15`) chroni czytelność tekstu. Zarówno klony,
+jak i warstwa przyciemniająca są dziećmi tego samego zamaskowanego kontenera;
+maska jest aktualizowana przy każdej zmianie rozmiaru panelu, więc w rogach nie
+zostają prostokątne skrawki. Kontener tła nie wpływa na wysokość panelu; jeśli
+shader się nie skompiluje, blur jest wyłączany i zostaje sam półprzezroczysty
+panel. Jest **wyłączony domyślnie**, bo rozmycie w czasie rzeczywistym zużywa
+GPU i może obciążać słabsze karty; w razie potrzeby obniż promień. Wszystkie
+trzy ustawienia działają na żywo, bez przycisku „Zapisz”.
+
+Do weryfikacji pikselowej rogów na zrzucie służy `tools/corner-check.py`:
+
+```bash
+python3 tools/corner-check.py screenshot.png --rect 210,100,860,420 --radius 18
+```
+
+Narzędzie porównuje jasność małych kwadratów w narożnikach z środkiem panelu
+i kończy się kodem 0, gdy żaden róg nie jest ciemniejszy o 6% lub więcej.
 
 ## Natywne providery GNOME
 
@@ -344,6 +357,7 @@ rozszerzenie skopiowane do tymczasowego `XDG_DATA_HOME`):
 
 ```bash
 bash tools/headless-smoke.sh
+tools/corner-check.py      # kontrola jasności narożników na zrzucie PNG
 ```
 
 Skrypt wypisuje `PASS: window-actions modal-open modal-typed modal-esc

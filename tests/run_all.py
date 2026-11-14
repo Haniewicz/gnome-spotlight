@@ -168,6 +168,7 @@ REQUIRED_FILES = [
     "tests/js/clipboard-store.test.js",
     "tests/js/ranking-path.test.js",
     "tests/js/path-index.test.js",
+    "tools/corner-check.py",
     "tools/package-release.sh",
     "tools/install.sh",
     "tests/run_all.py",

@@ -27,6 +27,10 @@ const MARKERS = [
   'modal-typed',
   'modal-esc',
   'modal-closed',
+  'screenshot-capture',
+  'screenshot-print-key',
+  'screenshot-allowkeybinding',
+  'veil-rounded',
   'preview-hidden-default',
   'preview-sidebar-toggle',
   'preview-ctrl-space',
@@ -403,6 +407,98 @@ function pressKey(modal, symbol, state = 0) {
   });
 }
 
+function screenshotFileSize(path) {
+  try {
+    const info = Gio.File.new_for_path(path).query_info(
+      'standard::size',
+      Gio.FileQueryInfoFlags.NONE,
+      null
+    );
+    return Number(info.get_size());
+  } catch {
+    return -1;
+  }
+}
+
+function captureScreenshotToFile(path) {
+  return new Promise((resolve, reject) => {
+    let screenshot = null;
+    try {
+      screenshot = new Shell.Screenshot();
+    } catch (error) {
+      reject(new Error(`Shell.Screenshot unavailable: ${error.message}`));
+      return;
+    }
+
+    let stream = null;
+    let settled = false;
+    const finish = (source, result) => {
+      if (settled)
+        return;
+
+      let failure = null;
+      let savedPath = path;
+      try {
+        const outcome = source.screenshot_finish(result);
+        if (typeof outcome === 'string')
+          savedPath = outcome;
+        else if (Array.isArray(outcome) &&
+            outcome.length > 0 && outcome[0] === false)
+          failure = new Error('screenshot_finish returned false');
+      } catch (error) {
+        failure = error;
+      }
+
+      if (!failure && savedPath && savedPath !== path) {
+        try {
+          Gio.File.new_for_path(savedPath).copy(
+            Gio.File.new_for_path(path),
+            Gio.FileCopyFlags.OVERWRITE,
+            null,
+            null
+          );
+        } catch (error) {
+          failure = error;
+        }
+      }
+
+      settled = true;
+      try {
+        stream?.close(null);
+      } catch {
+        // screenshot_finish() already completed; an already-closed stream is
+        // not a capture failure.
+      }
+      if (failure)
+        reject(failure instanceof Error ? failure : new Error(String(failure)));
+      else
+        resolve(path);
+    };
+
+    try {
+      // Shell 51 writes into a Gio stream; older Shell versions return the
+      // filename from screenshot_finish(). The smoke supports both so the
+      // marker fails for a real capture problem, not for API version skew.
+      if (screenshot.screenshot.length >= 3) {
+        stream = Gio.File.new_for_path(path).replace(
+          null,
+          false,
+          Gio.FileCreateFlags.REPLACE_DESTINATION,
+          null
+        );
+        screenshot.screenshot(false, stream, finish);
+      } else {
+        screenshot.screenshot(false, finish);
+      }
+    } catch (error) {
+      if (!settled) {
+        settled = true;
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+  });
+}
+
 function actionMenuItems(menu) {
   if (typeof menu?._getMenuItems === 'function')
     return menu._getMenuItems();
@@ -471,6 +567,8 @@ export async function run() {
 
     step = 'modal-open';
     const clipboardText = `smoke-schowek-${Date.now()}`;
+    const screenshotModesBeforeOpen =
+      Main.wm?._allowedKeybindings?.['show-screenshot-ui'];
     St.Clipboard.get_default().set_text(
       St.ClipboardType.CLIPBOARD,
       clipboardText
@@ -480,6 +578,58 @@ export async function run() {
     assert(modal, step, 'modal was not created');
     assert(modal.isOpen === true, step, 'keybinding handler did not open the modal');
     assert(modal.visible === true, step, 'modal is not visible');
+
+    step = 'screenshot-allowkeybinding';
+    const screenshotModesOpen =
+      Main.wm?._allowedKeybindings?.['show-screenshot-ui'];
+    assert(Number.isFinite(Number(screenshotModesOpen)), step,
+      `screenshot keybinding modes are ${screenshotModesOpen}`);
+    assert(
+      (Number(screenshotModesOpen) & Shell.ActionMode.SYSTEM_MODAL) ===
+        Shell.ActionMode.SYSTEM_MODAL ||
+      Number(screenshotModesOpen) === Shell.ActionMode.ALL,
+      step,
+      `screenshot keybinding modes ${screenshotModesOpen} do not include ` +
+        'SYSTEM_MODAL/ALL while the modal is open'
+    );
+
+    step = 'screenshot-print-key';
+    const screenshotUI = Main.screenshotUI;
+    assert(
+      screenshotUI && typeof screenshotUI.open === 'function',
+      step,
+      'Main.screenshotUI.open is unavailable in this Shell'
+    );
+    const originalScreenshotOpen = screenshotUI.open;
+    let screenshotOpenCalls = 0;
+    screenshotUI.open = function openStub() {
+      screenshotOpenCalls++;
+    };
+    let printEvent;
+    try {
+      printEvent = pressKey(modal, Clutter.KEY_Print);
+    } finally {
+      screenshotUI.open = originalScreenshotOpen;
+    }
+    assert(printEvent === Clutter.EVENT_STOP, step,
+      'Print was not consumed by the modal');
+    assert(screenshotOpenCalls === 1, step,
+      `Main.screenshotUI.open was called ${screenshotOpenCalls} times, expected 1`);
+
+    step = 'screenshot-capture';
+    const screenshotPath = GLib.build_filenamev([
+      GLib.get_tmp_dir(),
+      `spotlight-smoke-${Date.now()}.png`,
+    ]);
+    try {
+      await captureScreenshotToFile(screenshotPath);
+    } catch (error) {
+      assert(false, step,
+        `Shell.Screenshot did not save a PNG: ${error.message}`);
+    }
+    const screenshotSize = screenshotFileSize(screenshotPath);
+    assert(screenshotSize > 1024, step,
+      `screenshot PNG is ${screenshotSize} bytes, expected > 1024`);
 
     step = 'blur-off-by-default';
     assert(modal._panelBlurActor === null, step,
@@ -510,6 +660,13 @@ export async function run() {
     assert(clipboardEscape === Clutter.EVENT_STOP, step, 'Escape was not consumed');
     assert(modal.isOpen === false, step, 'modal is still open after clipboard check');
     assert(modal.visible === false, step, 'modal is still visible after clipboard check');
+
+    step = 'screenshot-allowkeybinding';
+    const screenshotModesClosed =
+      Main.wm?._allowedKeybindings?.['show-screenshot-ui'];
+    assert(screenshotModesClosed === screenshotModesBeforeOpen, step,
+      `screenshot keybinding modes after close are ${screenshotModesClosed}, ` +
+        `expected ${screenshotModesBeforeOpen}`);
 
     // Reopen for the remaining modal and preview checks.
     extension.stateObj._toggle();
@@ -1056,19 +1213,31 @@ export async function run() {
         modal._panelBlurClone, step,
         'background clone is not the first backdrop child');
       assert(modal._panelBlurVeil, step, 'panel blur veil is missing');
-      assert(modal._panelBlurVeil.get_parent() === modal._panel, step,
-        'panel blur veil is not a sibling of the backdrop');
-      assert(modal._panel.get_child_at_index?.(1) ===
+      assert(modal._panelBlurVeil.get_parent() === modal._panelBlurActor, step,
+        'panel blur veil is not inside the masked backdrop');
+      assert(modal._panelBlurActor.get_child_at_index?.(2) ===
         modal._panelBlurVeil, step,
-        'panel blur veil is not above the backdrop');
+        'panel blur veil is not above both blurred clones');
+
+      step = 'veil-rounded';
+      const veilEffects = modal._panelBlurVeil.get_effects?.() ?? [];
+      const veilHasMask = veilEffects.some(effect =>
+        typeof effect?.setMaskGeometry === 'function'
+      );
+      const veilHasOwnBackground =
+        String(modal._panelBlurVeil.get_style?.() ?? '')
+          .includes('background-color');
+      assert(veilHasMask || !veilHasOwnBackground, step,
+        'panel blur veil has neither a rounded mask nor an inherited colour');
 
       step = 'blur-layers';
       const layerChildren = blurLayer.get_children?.() ?? [];
       const layerClones = descendantActors(blurLayer).filter(child =>
         typeof child?.get_source === 'function'
       );
-      assert(layerChildren.length === 2, step,
-        `panel blur layer has ${layerChildren.length} children, expected 2`);
+      assert(layerChildren.length === 3, step,
+        `panel blur layer has ${layerChildren.length} children, ` +
+          'expected 2 clones + veil');
       assert(layerClones.length === 2, step,
         `panel blur layer has ${layerClones.length} clones, expected 2`);
       assert(layerChildren[0] === modal._panelBlurClone, step,
@@ -1276,6 +1445,7 @@ export async function run() {
         'blur-mask-effect',
         'blur-mask-radius',
         'blur-teardown',
+        'veil-rounded',
       ]);
       markers = markers.filter(marker => !unavailableMarkers.has(marker));
       markers.push('blur-unavailable');

@@ -22,6 +22,24 @@ test('maskCoverage is zero in the pixel outside the rounded corner', () => {
   assertLess(coverage, 0.01);
 });
 
+test('maskCoverage is zero in all four rounded corner scraps', () => {
+  const corners = [
+    [1, 1],
+    [WIDTH - 1, 1],
+    [1, HEIGHT - 1],
+    [WIDTH - 1, HEIGHT - 1],
+  ];
+  for (const [x, y] of corners) {
+    assertLess(maskCoverage({
+      x,
+      y,
+      width: WIDTH,
+      height: HEIGHT,
+      radius: RADIUS,
+    }), 0.01);
+  }
+});
+
 test('maskCoverage is one at the centre of the panel', () => {
   const coverage = maskCoverage({
     x: WIDTH / 2,
