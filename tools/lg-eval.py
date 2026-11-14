@@ -99,6 +99,24 @@ def combo(fd, *keys):
 def main():
     if len(sys.argv) < 2:
         raise SystemExit(__doc__)
+
+    # `--keys esc enter` wstrzykuje same klawisze: przydatne, gdy modal
+    # rozszerzenia trzyma grab i nie da się otworzyć Looking Glass.
+    if sys.argv[1] == "--keys":
+        fd = open_device()
+        try:
+            time.sleep(0.6)
+            for key in sys.argv[2:]:
+                combo(fd, *key.split("+"))
+            print(f"KEYS: {sys.argv[2:]}")
+        finally:
+            try:
+                fcntl.ioctl(fd, UI_DEV_DESTROY)
+            except OSError:
+                pass
+            os.close(fd)
+        return
+
     expr = sys.argv[1]
     fd = open_device()
     try:

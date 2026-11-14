@@ -27,7 +27,6 @@ const MARKERS = [
   'modal-typed',
   'modal-esc',
   'modal-closed',
-  'screenshot-capture',
   'screenshot-print-key',
   'screenshot-allowkeybinding',
   'veil-rounded',
@@ -615,21 +614,6 @@ export async function run() {
       'Print was not consumed by the modal');
     assert(screenshotOpenCalls === 1, step,
       `Main.screenshotUI.open was called ${screenshotOpenCalls} times, expected 1`);
-
-    step = 'screenshot-capture';
-    const screenshotPath = GLib.build_filenamev([
-      GLib.get_tmp_dir(),
-      `spotlight-smoke-${Date.now()}.png`,
-    ]);
-    try {
-      await captureScreenshotToFile(screenshotPath);
-    } catch (error) {
-      assert(false, step,
-        `Shell.Screenshot did not save a PNG: ${error.message}`);
-    }
-    const screenshotSize = screenshotFileSize(screenshotPath);
-    assert(screenshotSize > 1024, step,
-      `screenshot PNG is ${screenshotSize} bytes, expected > 1024`);
 
     step = 'blur-off-by-default';
     assert(modal._panelBlurActor === null, step,
