@@ -5,6 +5,10 @@ aplikacji, otwartych okien, plików (Tracker/localsearch, własny indeks ścież
 projektów i fallback `locate`), paneli Ustawień GNOME, komend powłoki,
 kalkulatora i historii schowka — z podglądem, menu akcji i frecency.
 
+Repozytorium: **https://github.com/Haniewicz/gnome-spotlight** — projekt
+nie jest (na razie) publikowany w GNOME Extensions; instalacja odbywa się
+z GitHuba (patrz niżej).
+
 Wizualna referencja: `mockup/launcher.html` oraz `mockup/spotlight-*.png`.
 Specyfikacja: `docs/DESIGN.md`.
 
@@ -13,7 +17,10 @@ Przy `enable()` rozszerzenie asynchronicznie rozgrzewa cache aplikacji, paneli U
 ## Wymagania
 
 - GNOME Shell 45–51 (testowane na 51.1) i gjs 1.90+.
-- `gnome-extensions` (pakiet `gnome-shell`).
+- `git`, `python3`, `unzip`, `gnome-extensions` (pakiet `gnome-shell`).
+- Opcjonalnie [Blur my Shell](https://extensions.gnome.org/extension/3193/blur-my-shell/)
+  (`blur-my-shell@aunetx`) — odpowiada za efekt rozmycia tła panelu; bez niego
+  blur jest wyłączony, a panel pozostaje półprzezroczysty.
 - Do plików: `localsearch` (Tracker 3.12, usługa `localsearch-3.service`) —
   zalecane, bo daje wyniki po nazwie i treści. `locate` (pakiet
   `mlocate`/`plocate`) jest fallbackiem; bez żadnego z nich sekcja plików jest
@@ -22,23 +29,75 @@ Przy `enable()` rozszerzenie asynchronicznie rozgrzewa cache aplikacji, paneli U
 - Do testów: `gjs` i `glib-compile-schemas`; do smoke dodatkowo
   `dbus-run-session` i sesyjny GNOME Shell w trybie headless.
 
-## Instalacja
+## Instalacja (z GitHub)
 
-Z katalogu repozytorium (jedno polecenie instaluje rozszerzenie i daemon):
+Projekt **nie jest jeszcze publikowany w GNOME Extensions** — instalujemy
+bezpośrednio z repozytorium:
 
 ```bash
+git clone https://github.com/Haniewicz/gnome-spotlight.git
+cd gnome-spotlight
 bash tools/install.sh
+```
+
+`tools/install.sh`:
+- pakuje rozszerzenie (`gnome-extensions pack` ze schematem i `lib/`),
+- instaluje je w `~/.local/share/gnome-shell/extensions/spotlight@haniewicz.dev`,
+- instaluje i uruchamia daemon `gnome-spotlightd` (`tools/install-daemon.sh`),
+- próbuje włączyć rozszerzenie i sprawdza `gnome-extensions info`.
+
+**Pierwsza instalacja:** GNOME Shell poznaje nowe UUID dopiero po restarcie
+sesji. Jeśli skrypt zakończy się komunikatem, że rozszerzenie nie jest jeszcze
+`ACTIVE`, **wyloguj się i zaloguj ponownie**, a potem:
+
+```bash
 gnome-extensions enable spotlight@haniewicz.dev
 gnome-extensions prefs spotlight@haniewicz.dev
 ```
 
-`tools/install.sh` pakuje ZIP (`gnome-extensions pack` ze schematem i `lib/`),
-instaluje go w `~/.local/share/gnome-shell/extensions/spotlight@haniewicz.dev`,
-uruchamia `tools/install-daemon.sh` i sprawdza `gnome-extensions info`. Sukces
-oznacza stan `ACTIVE`; jeśli Shell nie zna jeszcze UUID, skrypt kończy się kodem
-≠ 0 i przypomina: „wyloguj się i zaloguj, jeśli UUID nie jest jeszcze znany
-Shellowi”. Wariant z innym UUID (np. do testów obok zainstalowanej wersji) nadal
-obsługuje `bash tools/deploy.sh --uuid-suffix test`.
+Preferencje pozwalają ustawić skrót (domyślnie `Super + Space`), providery,
+limit wyników i wygląd panelu.
+
+### Sama wtyczka, bez daemona
+
+Daemon przyspiesza wyniki i obsługuje część providerów, ale rozszerzenie działa
+także w trybie `offline` (wolniej). Instalacja ręczna samej wtyczki:
+
+```bash
+DEST="$HOME/.local/share/gnome-shell/extensions/spotlight@haniewicz.dev"
+mkdir -p "$DEST"
+cp -R extension.js prefs.js metadata.json stylesheet.css lib schemas "$DEST"/
+glib-compile-schemas "$DEST/schemas"
+```
+
+Następnie wyloguj się i zaloguj, po czym uruchom
+`gnome-extensions enable spotlight@haniewicz.dev`.
+
+### Aktualizacja
+
+```bash
+cd gnome-spotlight
+git pull
+bash tools/install.sh
+```
+
+Po aktualizacji kodu **wyloguj się i zaloguj ponownie** — GNOME Shell cache'uje
+moduły ESM rozszerzenia, więc sam `disable/enable` nie wczyta nowej wersji.
+Daemon jest aktualizowany i restartowany przez `tools/install-daemon.sh`.
+
+### Odinstalowanie
+
+```bash
+gnome-extensions disable spotlight@haniewicz.dev
+rm -rf "$HOME/.local/share/gnome-shell/extensions/spotlight@haniewicz.dev"
+systemctl --user disable --now gnome-spotlightd 2>/dev/null || true
+rm -rf "$HOME/.local/lib/gnome-spotlightd"
+rm -f "$HOME/.config/systemd/user/gnome-spotlightd.service"
+systemctl --user daemon-reload 2>/dev/null || true
+```
+
+Wariant z innym UUID (np. do testów obok zainstalowanej wersji) obsługuje
+`bash tools/deploy.sh --uuid-suffix test`.
 
 ## Co zawiera `dist/`
 
@@ -480,4 +539,10 @@ tests/run_all.py
 tests/js/               # testy PURE (gjs -m)
 tests/headless/smoke.js # skrypt automatyzacji Shella
 tests/headless/perf.js  # first-paint/result/stall daemon + fallback w Shellu
+LICENSE                 # licencja MIT
 ```
+
+## Licencja
+
+Kod jest udostępniany na licencji **MIT** — pełny tekst w pliku
+[`LICENSE`](LICENSE). Copyright © 2026 Kamil Haniewicz.
