@@ -56,7 +56,10 @@
 }
 
 .spotlight-results {
-  padding: 6px 8px 10px 8px;
+  /* No bottom padding: the last row must sit flush against the footer border
+   * instead of leaving an empty strip above it when the list is scrolled to
+   * the end. */
+  padding: 6px 8px 0 8px;
 }
 
 .spotlight-section {

@@ -1304,12 +1304,7 @@ export async function run() {
       'window clone reference survived blur-enabled=false');
     assert(cloneSources(modal).length === 0, step,
       'blur clones leaked after blur-enabled=false');
-    // The progressive edge blur of the results list is a separate feature and
-    // stays attached while the list overflows; only the panel-blur effects must
-    // be gone here.
-    const leakedBlurEffects = actorEffects(modal)
-      .filter(effect => effect !== modal._resultsEdgeFade);
-    assert(leakedBlurEffects.length === 0, step,
+    assert(actorEffects(modal).length === 0, step,
       'blur effects leaked after blur-enabled=false');
 
     modal.close();

@@ -60,8 +60,6 @@ lib/providers/files.js           # Gio.Subprocess -> locate
 lib/providers/calculator.js      # opakowanie lib/calculator.js na Result
 lib/ui/modal.js                  # St: overlay, entry, lista, sekcje
 lib/ui/backdrop.js               # St: klon tapety + okien + efekt blur (Blur my Shell)
-lib/edge-fade.js                 # PURE: siła progresywnego rozmycia krawędzi listy
-lib/ui/edge-fade.js              # St: ShaderEffect progresywnego blur/fade listy
 lib/ui/resultRow.js              # St: pojedynczy wiersz
 lib/ui/preview.js                # St: panel podglądu
 lib/ui/actions.js               # menu akcji (Ctrl+K)
@@ -187,12 +185,6 @@ Reguły wykonania:
   blurra). Gdy Blur my Shell nie
   jest zainstalowany lub włączony, blur jest wyłączany i zostaje półprzezroczysty panel
   (żadnej drugiej, niedopasowanej maski).
-- Lista wyników: gdy przewija się (część wierszy jest ukryta), górna i dolna
-  krawędź viewportu dostaje progresywne rozmycie — wiersz przecięty linią
-  odcięcia rozmywa się i wygasa (ShaderEffect z 9-próbkowym box blur, siła
-  zależna od pozycji przewinięcia). Efekt jest przyczepiany tylko przy realnym
-  przepełnieniu listy, więc krótkie listy renderują się dokładnie jak wcześniej;
-  gdy shader jest niedostępny, lista pozostaje ostro przycięta.
 - Skrót: `Main.wm.addKeybinding('toggle-keybinding', settings, Meta.KeyBindingFlags.NONE,
   Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW, handler)`; w `disable()` zawsze
   `removeKeybinding`. Domyślnie `['<Super>space']`. Konflikt z „przełącz języki”: nie nadpisujemy,

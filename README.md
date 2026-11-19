@@ -214,13 +214,6 @@ wysokość panelu. Blur jest **wyłączony domyślnie**, bo rozmycie w czasie
 rzeczywistym zużywa GPU i może obciążać słabsze karty; w razie potrzeby obniż
 promień. Wszystkie trzy ustawienia działają na żywo, bez przycisku „Zapisz”.
 
-Gdy lista wyników jest dłuższa niż panel, wiersz przecięty górną lub dolną
-krawędzią viewportu nie jest już ucinany ostro: krawędź dostaje progresywne
-rozmycie i delikatne wygaszenie (ShaderEffect z 9-próbkowym box blurem, siła
-zależna od pozycji przewinięcia — góra rozmywa się dopiero po przewinięciu,
-dół tylko gdy poniżej są kolejne wyniki). Krótkie listy renderują się bez tego
-efektu; jeśli shader jest niedostępny, lista pozostaje ostro przycięta.
-
 Do weryfikacji pikselowej rogów na zrzucie służy `tools/corner-check.py`:
 
 ```bash
