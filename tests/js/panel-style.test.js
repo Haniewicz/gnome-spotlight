@@ -3,10 +3,13 @@ import {
 } from './harness.js';
 import {
   resolvePanelStyle,
+  resolveBlurVeilStyle,
   resolveBlurVeilAlpha,
   clampPanelOpacity,
   clampBlurRadius,
   BLUR_SURFACE_STYLE,
+  PANEL_BORDER_WIDTH,
+  PANEL_BORDER_RGBA,
   PANEL_RGB,
   DEFAULT_PANEL_OPACITY,
   DEFAULT_BLUR_RADIUS,
@@ -91,6 +94,32 @@ test('the style object exposes only the documented fields', () => {
 test('the veil alpha follows 1 - opacity + 0.15', () => {
   assertTrue(Math.abs(resolveBlurVeilAlpha(0.93) - 0.22) <= 0.001);
   assertTrue(Math.abs(resolveBlurVeilAlpha(0.5) - 0.65) <= 0.001);
+});
+
+test('blur veil paints a delicate 1 px border inside the rounded surface', () => {
+  const style = resolveBlurVeilStyle({ veilAlpha: 0.22, radius: 18 });
+  assertTrue(style.includes('background-color: rgba(26,27,34,0.22)'));
+  assertTrue(style.includes(
+    `border: ${PANEL_BORDER_WIDTH}px solid rgba(${PANEL_BORDER_RGBA})`
+  ));
+  assertTrue(style.includes('border-radius: 18px'));
+  // Obwódka ma być delikatna, a nie drugi mocny kształt przy blurze.
+  assertEqual(PANEL_BORDER_WIDTH, 1);
+  const alpha = Number(/rgba\(255,255,255,([0-9.]+)\)/.exec(style)?.[1]);
+  assertTrue(alpha > 0 && alpha <= 0.2);
+  // Bez box-shadow: cień to kolejny łuk rysowany przez St.
+  assertFalse(style.includes('box-shadow'));
+});
+
+test('blur veil style clamps alpha and rounds the radius', () => {
+  assertTrue(resolveBlurVeilStyle({ veilAlpha: 2, radius: 18.6 })
+    .includes('rgba(26,27,34,1)'));
+  assertTrue(resolveBlurVeilStyle({ veilAlpha: -1, radius: 18.6 })
+    .includes('rgba(26,27,34,0)'));
+  assertTrue(resolveBlurVeilStyle({ veilAlpha: 0.3, radius: 18.6 })
+    .includes('border-radius: 19px'));
+  assertTrue(resolveBlurVeilStyle({})
+    .includes('border-radius: 18px'));
 });
 
 test('blur surface style clears every competing rounded shape', () => {

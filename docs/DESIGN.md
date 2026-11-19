@@ -180,7 +180,9 @@ Reguły wykonania:
   Shell (`blur-my-shell@aunetx`). Ten efekt rozmywa i zaokrągla rogi (18 px) w jednym
   przebiegu: maska wyjściowa liczy się względem powierzchni aktora, a nie powiększonego
   bufora rozmycia, więc w rogach nie ma skrawków. Welur czytelności jest osobnym,
-  półprzezroczystym aktorem z `border-radius` ustawianym inline. Gdy Blur my Shell nie
+  półprzezroczystym aktorem z `border-radius` i delikatną 1 px obwódką
+  `rgba(255,255,255,0.16)` ustawianymi inline (ta sama obwódka co w trybie bez
+  blurra). Gdy Blur my Shell nie
   jest zainstalowany lub włączony, blur jest wyłączany i zostaje półprzezroczysty panel
   (żadnej drugiej, niedopasowanej maski).
 - Skrót: `Main.wm.addKeybinding('toggle-keybinding', settings, Meta.KeyBindingFlags.NONE,

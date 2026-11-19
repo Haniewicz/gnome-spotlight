@@ -1190,6 +1190,8 @@ export async function run() {
       const veilStyle = String(modal._panelBlurVeil.get_style?.() ?? '');
       assert(veilStyle.includes('border-radius'), step,
         'panel blur veil is not rounded via border-radius');
+      assert(veilStyle.includes('border: '), step,
+        'panel blur veil has no delicate border');
 
       step = 'blur-layers';
       const layerChildren = blurLayer.get_children?.() ?? [];

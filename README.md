@@ -196,8 +196,10 @@ Na początku okna preferencji znajduje się grupa **„Wygląd”**:
 Blur rozmywa to, co jest pod panelem: klonuje dwie warstwy — tapetę
 (`Main.layoutManager._backgroundGroup`) i okna (`global.window_group`) — do
 kontenera o rozmiarze panelu, a półprzezroczysta ciemna warstwa
-(`1 - panel-opacity + 0.15`) chroni czytelność tekstu. Rozmycie i zaokrąglenie
-rogów (18 px) wykonuje **jeden** efekt — `DualKawaseBlurEffect` z rozszerzenia
+(`1 - panel-opacity + 0.15`) chroni czytelność tekstu. Welur rysuje też
+delikatną 1 px obwódkę `rgba(255,255,255,0.16)` (tę samą co w trybie bez
+blurra), która odcina panel od tła bez dokładania drugiego zaokrąglonego
+kształtu. Rozmycie i zaokrąglenie rogów (18 px) wykonuje **jeden** efekt — `DualKawaseBlurEffect` z rozszerzenia
 [Blur my Shell](https://extensions.gnome.org/extension/3193/blur-my-shell/)
 (`blur-my-shell@aunetx`): jego shader wyjściowy zna rzeczywiste (powiększone o
 padding) granice rozmycia i przycina zaokrąglony kształt do powierzchni aktora,
