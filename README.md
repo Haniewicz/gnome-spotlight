@@ -57,7 +57,7 @@ Skrypt jest idempotentny (kolejne uruchomienie nadpisuje `dist/<wersja>/`), nie
 dotyka `~/.local` i niczego nie publikuje. Weryfikacja artefaktów:
 
 ```bash
-sha256sum -c dist/0.2.0/SHA256SUMS.txt
+sha256sum -c dist/<wersja>/SHA256SUMS.txt
 ```
 
 ## Skrót
