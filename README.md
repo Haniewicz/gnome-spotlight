@@ -243,8 +243,6 @@ dopiero `Ctrl+Space`; to samo skrócenie albo `Esc` zwija panel z powrotem.
 
 Na początku okna preferencji znajduje się grupa **„Wygląd”**:
 
-![Panel Spotlight z podglądem wyniku](mockup/spotlight-results.png)
-
 - **Krycie panelu** — suwak 50–100% (`panel-opacity`, domyślnie 93%);
   natychmiast zmienia `rgba(26,27,34,<krycie>)` tła panelu,
 - **Rozmycie tła (blur)** — opcjonalny przełącznik (`blur-enabled`, domyślnie
