@@ -72,6 +72,7 @@ EXPECTED_DEFAULTS = {
 # These modules are PURE by DESIGN §3: they must never import the shell or GI.
 PURE_MODULES = [
     "lib/cache.js",
+    "lib/desktop-visibility.js",
     "lib/text.js",
     "lib/fuzzy.js",
     "lib/ranking.js",
@@ -101,6 +102,7 @@ PURE_MODULES = [
 
 REQUIRED_FILES = [
     "metadata.json",
+    "lib/desktop-visibility.js",
     "extension.js",
     "stylesheet.css",
     "schemas/org.gnome.shell.extensions.spotlight.gschema.xml",
@@ -161,6 +163,7 @@ REQUIRED_FILES = [
     "tests/js/preview-model.test.js",
     "tests/js/panel-style.test.js",
     "tests/js/panel-blur.test.js",
+    "tests/js/desktop-visibility.test.js",
     "tests/js/window-actions.test.js",
     "tests/js/clipboard-store.test.js",
     "tests/js/ranking-path.test.js",

@@ -63,6 +63,10 @@ Documentation=file://$ROOT/docs/DESIGN.md
 
 [Service]
 Type=simple
+# The daemon starts from default.target, possibly before gnome-session exports
+# the desktop environment. Give it the session desktop explicitly so GIO's
+# OnlyShowIn rules work even for that early start.
+Environment=XDG_CURRENT_DESKTOP=GNOME
 ExecStart=$GJS_BIN -m $INSTALL_DIR/searchd/main.js
 Restart=on-failure
 RestartSec=1

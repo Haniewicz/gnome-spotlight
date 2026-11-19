@@ -2,21 +2,68 @@
 // AppSystem, so the module can run in a plain GJS daemon.
 import Gio from 'gi://Gio';
 import GioUnix from 'gi://GioUnix';
+import GLib from 'gi://GLib';
 
 import { ttlCache } from '../../lib/cache.js';
+import {
+  desktopList,
+  shouldShowOnDesktops,
+} from '../../lib/desktop-visibility.js';
 import { scoreResult } from '../../lib/ranking.js';
 import { ProviderPriority } from '../../lib/providers/registry.js';
 
 const PROVIDER_ID = 'apps';
 const APPS_CACHE_TTL_MS = 30 * 1000;
 
-function isHidden(appInfo) {
+function stringKey(appInfo, key) {
   try {
-    if (appInfo.should_show && !appInfo.should_show())
-      return true;
+    return String(appInfo.get_string?.(key) ?? '');
   } catch {
-    // Fall through to the explicit desktop keys.
+    return '';
   }
+}
+
+function daemonDesktops() {
+  let raw = '';
+  try {
+    raw = String(
+      GLib.getenv('XDG_CURRENT_DESKTOP') ??
+      GLib.getenv('XDG_SESSION_DESKTOP') ??
+      ''
+    );
+  } catch {
+    raw = '';
+  }
+  return desktopList(raw);
+}
+
+function shouldShow(appInfo) {
+  let shown = true;
+  try {
+    shown = appInfo.should_show ? appInfo.should_show() : true;
+  } catch {
+    shown = true;
+  }
+  if (shown)
+    return true;
+
+  // Gio.AppInfo.should_show() reads XDG_CURRENT_DESKTOP. The daemon may be
+  // started from systemd's default.target before gnome-session exports that
+  // variable, in which case should_show() reports false for every GNOME-only
+  // app (Extension Manager, GNOME Extensions, ...) for the whole daemon
+  // lifetime. Re-evaluate OnlyShowIn/NotShowIn against GNOME instead of
+  // hiding those apps outright; Hidden/NoDisplay are checked separately
+  // below.
+  return shouldShowOnDesktops({
+    onlyShowIn: stringKey(appInfo, 'OnlyShowIn'),
+    notShowIn: stringKey(appInfo, 'NotShowIn'),
+    desktops: daemonDesktops(),
+  });
+}
+
+function isHidden(appInfo) {
+  if (!shouldShow(appInfo))
+    return true;
 
   for (const key of ['Hidden', 'NoDisplay']) {
     try {
