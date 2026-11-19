@@ -5,6 +5,7 @@ import Shell from 'gi://Shell';
 import GLib from 'gi://GLib';
 
 import { SpotlightModal } from './lib/ui/modal.js';
+import { initBmsBlur } from './lib/ui/backdrop.js';
 import { ProviderRegistry } from './lib/providers/registry.js';
 import { UsageStore } from './lib/usage.js';
 import { createProvider as createAppsProvider } from './lib/providers/apps.js';
@@ -101,6 +102,12 @@ export default class SpotlightExtension extends Extension {
     );
 
     this._enabled = true;
+
+    // Blur my Shell's DualKawaseBlurEffect is imported lazily on first use.
+    // Warm it up now so the first open paints the blurred corners immediately
+    // instead of flashing the translucent fallback for a frame.
+    initBmsBlur().catch(error => logError(error));
+
     this._scheduleWarmup();
     this._scheduleDaemonProbe();
   }

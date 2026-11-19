@@ -59,8 +59,7 @@ lib/providers/commands.js        # prefiks ">"
 lib/providers/files.js           # Gio.Subprocess -> locate
 lib/providers/calculator.js      # opakowanie lib/calculator.js na Result
 lib/ui/modal.js                  # St: overlay, entry, lista, sekcje
-lib/ui/backdrop.js               # St: klon tapety + okien pod blur
-lib/ui/rounded-mask.js           # PURE geometria + Clutter.ShaderEffect maski
+lib/ui/backdrop.js               # St: klon tapety + okien + efekt blur (Blur my Shell)
 lib/ui/resultRow.js              # St: pojedynczy wiersz
 lib/ui/preview.js                # St: panel podglądu
 lib/ui/actions.js               # menu akcji (Ctrl+K)
@@ -176,10 +175,14 @@ Reguły wykonania:
   dziedziczymy). Wartości z makiety, tolerancja ±2 px.
 - Blur: kontener tła jest pierwszym dzieckiem `Clutter.BinLayout` panelu, ma zerowy
   naturalny rozmiar i `clip_to_allocation`; nie zmienia wysokości panelu. Klonuje tapetę
-  i `global.window_group` (nigdy `Main.uiGroup`/stage, żeby nie złapać własnego panelu),
-  a `Clutter.ShaderEffect` z uniformem `radius` (18 px z CSS) maskuje zaokrąglone rogi
-  po `Shell.BlurEffect`. Błąd kompilacji shadera wyłącza blur i zostawia półprzezroczysty
-  panel.
+  i `global.window_group` (nigdy `Main.uiGroup`/stage, żeby nie złapać własnego panelu)
+  do wewnętrznego aktora, na którym wisi `DualKawaseBlurEffect` z rozszerzenia Blur my
+  Shell (`blur-my-shell@aunetx`). Ten efekt rozmywa i zaokrągla rogi (18 px) w jednym
+  przebiegu: maska wyjściowa liczy się względem powierzchni aktora, a nie powiększonego
+  bufora rozmycia, więc w rogach nie ma skrawków. Welur czytelności jest osobnym,
+  półprzezroczystym aktorem z `border-radius` ustawianym inline. Gdy Blur my Shell nie
+  jest zainstalowany lub włączony, blur jest wyłączany i zostaje półprzezroczysty panel
+  (żadnej drugiej, niedopasowanej maski).
 - Skrót: `Main.wm.addKeybinding('toggle-keybinding', settings, Meta.KeyBindingFlags.NONE,
   Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW, handler)`; w `disable()` zawsze
   `removeKeybinding`. Domyślnie `['<Super>space']`. Konflikt z „przełącz języki”: nie nadpisujemy,

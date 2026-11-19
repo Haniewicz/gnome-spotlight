@@ -11,6 +11,7 @@ import { parseActions } from '../../lib/action-runner.js';
 import { normalizeDaemonResult } from '../../lib/daemonClient.js';
 import { normalizeResultActions } from '../../lib/searchStream.js';
 import { planTile } from '../../lib/window-actions.js';
+import { bmsBlurAvailable, initBmsBlur } from '../../lib/ui/backdrop.js';
 
 const UUID = 'spotlight@haniewicz.dev';
 const COEXIST_UUID = `${UUID}-coexist`;
@@ -45,8 +46,8 @@ const MARKERS = [
   'blur-layers',
   'blur-window-clone',
   'blur-height-stable',
-  'blur-mask-effect',
-  'blur-mask-radius',
+  'blur-effect',
+  'blur-corner-radius',
   'blur-teardown',
   'clipboard-item',
   'action-menu',
@@ -1139,15 +1140,15 @@ export async function run() {
     modalSettings.set_boolean('blur-enabled', true);
 
     const backgroundGroup = Main.layoutManager?._backgroundGroup ?? null;
-    if (typeof Shell.BlurEffect !== 'function' || !backgroundGroup ||
-        !global.window_group) {
+    await initBmsBlur();
+    if (!bmsBlurAvailable() || !backgroundGroup || !global.window_group) {
       blurCloneAvailable = false;
       await waitFor(
         () => modal._panelBlurClone === null && modal._panelBlurActor === null,
         'translucent fallback with blur-enabled on an unavailable backend'
       );
-      const reason = typeof Shell.BlurEffect !== 'function'
-        ? 'Shell.BlurEffect unavailable'
+      const reason = !bmsBlurAvailable()
+        ? 'Blur my Shell unavailable'
         : !backgroundGroup
           ? 'background group unavailable'
           : 'window group unavailable';
@@ -1161,11 +1162,10 @@ export async function run() {
         () => modal._panelBlurLayer,
         'panel blur layer'
       );
-      const blurEffect = (modal._panelBlurHost?.get_effects?.() ?? [])
-        .find(effect => effect instanceof Shell.BlurEffect) ?? null;
-      assert(blurEffect, step, 'panel backdrop has no Shell.BlurEffect');
-      assert(Number(blurEffect.radius) === 32, step,
-        `panel BlurEffect radius is ${blurEffect.radius}, expected 32`);
+      const blurEffect = modal._panelBlurEffect ?? null;
+      assert(blurEffect, step, 'panel backdrop has no Blur my Shell effect');
+      assert(Number(blurEffect.unscaled_radius) === 32, step,
+        `panel blur unscaled_radius is ${blurEffect.unscaled_radius}, expected 32`);
       assert(blurClone.visible === true, step, 'panel blur clone is hidden');
       assert(modal._panelBlurActor?.visible === true, step,
         'panel backdrop container is hidden');
@@ -1185,15 +1185,11 @@ export async function run() {
         'panel blur veil is not above the blurred clones');
 
       step = 'veil-rounded';
-      const veilEffects = modal._panelBlurVeil.get_effects?.() ?? [];
-      const veilHasMask = veilEffects.some(effect =>
-        typeof effect?.setMaskGeometry === 'function'
-      );
-      const veilHasOwnBackground =
-        String(modal._panelBlurVeil.get_style?.() ?? '')
-          .includes('background-color');
-      assert(veilHasMask || !veilHasOwnBackground, step,
-        'panel blur veil has neither a rounded mask nor an inherited colour');
+      // The veil is a plain tint rounded by CSS border-radius (the BMS blur
+      // rounds the clones itself); it must carry a radius, not a square edge.
+      const veilStyle = String(modal._panelBlurVeil.get_style?.() ?? '');
+      assert(veilStyle.includes('border-radius'), step,
+        'panel blur veil is not rounded via border-radius');
 
       step = 'blur-layers';
       const layerChildren = blurLayer.get_children?.() ?? [];
@@ -1238,29 +1234,23 @@ export async function run() {
         modal._panelBlurWindowClone.y < 0, step,
         'window clone offset is not negative');
 
-      step = 'blur-mask-effect';
-      // Blur sits on the inner host and the rounded mask on the outer actor:
-      // that fixes the effect order, so the mask always clips the blurred
-      // composite instead of being blurred afterwards (square corner scraps).
+      step = 'blur-effect';
+      // The BMS blur sits on the inner host and rounds its own corners; the
+      // outer container carries no mask (the retired offscreen rounded mask
+      // mis-sampled the panel texture in GNOME 51).
       const layerEffects = modal._panelBlurActor?.get_effects?.() ?? [];
       const hostEffects = modal._panelBlurHost?.get_effects?.() ?? [];
-      assert(layerEffects.length === 1, step,
-        `masked container has ${layerEffects.length} effects, expected 1 (mask)`);
-      assert(layerEffects[0] instanceof Clutter.ShaderEffect, step,
-        'outer container effect is not Clutter.ShaderEffect');
-      assert(modal._panelBlurMask === layerEffects[0], step,
-        'modal does not reference the attached rounded mask');
+      assert(layerEffects.length === 0, step,
+        `backdrop container has ${layerEffects.length} effects, expected 0`);
       assert(hostEffects.length === 1, step,
         `blur host has ${hostEffects.length} effects, expected 1 (blur)`);
-      assert(hostEffects[0] instanceof Shell.BlurEffect, step,
-        'blur host effect is not Shell.BlurEffect');
+      assert(hostEffects[0] === modal._panelBlurEffect, step,
+        'blur host effect is not the referenced Blur my Shell effect');
 
-      step = 'blur-mask-radius';
-      const maskRadius = Number(
-        modal._panelBlurMask?.radius ?? modal._panelBlurMask?._radius
-      );
-      assert(maskRadius === 18, step,
-        `mask uniform radius is ${maskRadius}, expected 18`);
+      step = 'blur-corner-radius';
+      const cornerRadius = Number(modal._panelBlurEffect?.corner_radius);
+      assert(cornerRadius === 18, step,
+        `blur corner_radius is ${cornerRadius}, expected 18`);
 
       step = 'blur-height-stable';
       await waitFor(
@@ -1285,12 +1275,12 @@ export async function run() {
       // the modal or rebuilding the actor tree.
       modalSettings.set_int('blur-radius', 40);
       await waitFor(
-        () => Number(modal._panelBlurEffect?.radius) === 40,
+        () => Number(modal._panelBlurEffect?.unscaled_radius) === 40,
         'live blur radius update'
       );
       modalSettings.set_int('blur-radius', 32);
       await waitFor(
-        () => Number(modal._panelBlurEffect?.radius) === 32,
+        () => Number(modal._panelBlurEffect?.unscaled_radius) === 32,
         'blur radius restored to 32'
       );
     }

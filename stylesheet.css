@@ -11,13 +11,18 @@
 
 /* Optional backdrop actor: the blur effect is attached at runtime only when
  * the blur-enabled setting is on. The translucent dark veil keeps the text
- * readable over bright windows. */
+ * readable over bright windows.
+ *
+ * Celowo BEZ border-radius na backdropzie: rogi zaokrągla wyłącznie efekt
+ * Blur my Shell (DualKawaseBlurEffect + corner_radius), w jednym przebiegu z
+ * rozmyciem. Drugi, osobno rasteryzowany łuk w CSS zostawiał w rogach
+ * skrawki/schodki. Promień weluru jest ustawiany inline przez modal, żeby
+ * pokrywał się z promieniem panelu; patrz BLUR_SURFACE_STYLE w
+ * lib/panel-style.js (czyści cień i promień samego modalu). */
 .spotlight-blur-backdrop {
-  border-radius: 18px;
 }
 
 .spotlight-blur-veil {
-  border-radius: 18px;
 }
 
 .spotlight-search-row {

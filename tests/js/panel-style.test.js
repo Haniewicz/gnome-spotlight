@@ -6,6 +6,7 @@ import {
   resolveBlurVeilAlpha,
   clampPanelOpacity,
   clampBlurRadius,
+  BLUR_SURFACE_STYLE,
   PANEL_RGB,
   DEFAULT_PANEL_OPACITY,
   DEFAULT_BLUR_RADIUS,
@@ -90,6 +91,17 @@ test('the style object exposes only the documented fields', () => {
 test('the veil alpha follows 1 - opacity + 0.15', () => {
   assertTrue(Math.abs(resolveBlurVeilAlpha(0.93) - 0.22) <= 0.001);
   assertTrue(Math.abs(resolveBlurVeilAlpha(0.5) - 0.65) <= 0.001);
+});
+
+test('blur surface style clears every competing rounded shape', () => {
+  // Regresja rogów przy blurze: modal nie może malować drugiego zaokrąglonego
+  // kształtu obok zamaskowanego backdropu. Tło, obramowanie, promień ORAZ cień
+  // muszą być wyczyszczone — pozostawiony box-shadow/border-radius z CSS to
+  // drugi łuk (St rysuje cień programowo), który zostawia skrawki w rogach.
+  assertTrue(BLUR_SURFACE_STYLE.includes('background-color: transparent'));
+  assertTrue(BLUR_SURFACE_STYLE.includes('border: none'));
+  assertTrue(BLUR_SURFACE_STYLE.includes('box-shadow: none'));
+  assertTrue(BLUR_SURFACE_STYLE.includes('border-radius: 0'));
 });
 
 run('panel-style.test.js');

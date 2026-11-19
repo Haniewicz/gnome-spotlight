@@ -193,18 +193,24 @@ Na początku okna preferencji znajduje się grupa **„Wygląd”**:
 - **Promień rozmycia** — suwak 0–48 px (`blur-radius`, domyślnie 24), aktywny
   tylko przy włączonym blurze.
 
-Blur korzysta z `Shell.BlurEffect` (GNOME Shell 51) i rozmywa to, co jest pod
-panelem: klonuje dwie warstwy — tapetę (`Main.layoutManager._backgroundGroup`)
-i okna (`global.window_group`) — do kontenera o rozmiarze panelu. Maska
-`Clutter.ShaderEffect` zaokrągla rogi (18 px), a półprzezroczysta ciemna
-warstwa (`1 - panel-opacity + 0.15`) chroni czytelność tekstu. Zarówno klony,
-jak i warstwa przyciemniająca są dziećmi tego samego zamaskowanego kontenera;
-maska jest aktualizowana przy każdej zmianie rozmiaru panelu, więc w rogach nie
-zostają prostokątne skrawki. Kontener tła nie wpływa na wysokość panelu; jeśli
-shader się nie skompiluje, blur jest wyłączany i zostaje sam półprzezroczysty
-panel. Jest **wyłączony domyślnie**, bo rozmycie w czasie rzeczywistym zużywa
-GPU i może obciążać słabsze karty; w razie potrzeby obniż promień. Wszystkie
-trzy ustawienia działają na żywo, bez przycisku „Zapisz”.
+Blur rozmywa to, co jest pod panelem: klonuje dwie warstwy — tapetę
+(`Main.layoutManager._backgroundGroup`) i okna (`global.window_group`) — do
+kontenera o rozmiarze panelu, a półprzezroczysta ciemna warstwa
+(`1 - panel-opacity + 0.15`) chroni czytelność tekstu. Rozmycie i zaokrąglenie
+rogów (18 px) wykonuje **jeden** efekt — `DualKawaseBlurEffect` z rozszerzenia
+[Blur my Shell](https://extensions.gnome.org/extension/3193/blur-my-shell/)
+(`blur-my-shell@aunetx`): jego shader wyjściowy zna rzeczywiste (powiększone o
+padding) granice rozmycia i przycina zaokrąglony kształt do powierzchni aktora,
+więc w narożnikach nie zostają ostre, prostokątne skrawki. Wcześniejsza wersja
+łączyła `Shell.BlurEffect` z osobną maską `Clutter.ShaderEffect`; dziecko z
+efektem rozmycia powiększa bufor pośredni przodka, a maska liczona z rozmiaru
+aktora nie trafiała wtedy w jego rogi (widoczne „zepsute rogi”). Z tego powodu
+Blur my Shell jest **wymagany** do działania blurra: gdy rozszerzenie nie jest
+zainstalowane lub włączone, blur jest wyłączany i zostaje sam półprzezroczysty
+panel (bez ryzyka narysowania popsutych rogów). Kontener tła nie wpływa na
+wysokość panelu. Blur jest **wyłączony domyślnie**, bo rozmycie w czasie
+rzeczywistym zużywa GPU i może obciążać słabsze karty; w razie potrzeby obniż
+promień. Wszystkie trzy ustawienia działają na żywo, bez przycisku „Zapisz”.
 
 Do weryfikacji pikselowej rogów na zrzucie służy `tools/corner-check.py`:
 
