@@ -56,18 +56,27 @@ describe('searchStream', () => {
     assertEqual(mergeSources(daemon, [], { limit: -5 }).length, 0);
   });
 
-  test('stabilize preserves previous reference for an identical identity set', () => {
+  test('stabilize preserves previous reference for the same ordered set', () => {
     const one = result('apps', '1', 'one');
     const two = result('windows', '2', 'two');
     const previous = [one, two];
     const next = [
-      { ...two, title: 'two updated' },
       { ...one, title: 'one updated' },
+      { ...two, title: 'two updated' },
     ];
 
     const stable = stabilize(previous, next);
     assertEqual(stable, previous);
     assertTrue(stable === previous);
+  });
+
+  test('stabilize returns next when the same set is reordered', () => {
+    const one = result('apps', '1', 'one');
+    const two = result('windows', '2', 'two');
+    const previous = [one, two];
+    const next = [two, one];
+
+    assertTrue(stabilize(previous, next) === next);
   });
 
   test('stabilize returns next for a changed set and for the first response', () => {

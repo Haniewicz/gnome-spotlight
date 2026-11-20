@@ -17,6 +17,7 @@ import { createProvider as createCalculatorProvider } from './lib/providers/calc
 import { createProvider as createClipboardProvider } from './lib/providers/clipboard.js';
 import { DaemonClient } from './lib/daemonClient.js';
 import { searchDaemonSources } from './lib/searchStream.js';
+import { boostResultsByUsage } from './lib/ranking.js';
 
 const USAGE_SAVE_DELAY_MS = 500;
 const DAEMON_SEARCH_TIMEOUT_MS = 150;
@@ -201,7 +202,7 @@ export default class SpotlightExtension extends Extension {
       };
     }
 
-    return searchDaemonSources({
+    const response = await searchDaemonSources({
       query,
       mode,
       limit,
@@ -214,14 +215,28 @@ export default class SpotlightExtension extends Extension {
       localWindows: (needle, searchOptions) =>
         this._searchWindows(needle, searchOptions.limit),
       fallbackSearch: async needle => {
-        const response = await this._registry.search(needle, { limit });
+        const local = await this._registry.search(needle, { limit });
         return {
-          results: Array.isArray(response?.results) ? response.results : [],
-          stats: this._localStats(response),
+          results: Array.isArray(local?.results) ? local.results : [],
+          stats: this._localStats(local),
           source: 'offline',
         };
       },
     });
+
+    // The daemon cannot read the Shell usage store. Apply the same frecency
+    // preference locally, but only for the daemon response: the offline
+    // registry path already ranked its results with the usage store.
+    if (response?.source === 'daemon' && Array.isArray(response.results) &&
+        response.results.length > 0 && this._usageStore) {
+      try {
+        response.results = boostResultsByUsage(response.results, this._usageStore);
+      } catch (error) {
+        logError(error, 'nie można zastosować frecency do wyników daemona');
+      }
+    }
+
+    return response;
   }
 
   _localStats(response) {

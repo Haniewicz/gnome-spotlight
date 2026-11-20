@@ -1,7 +1,9 @@
 import {
   test, run, assert, assertEqual, assertDeepEqual, assertGreater, assertLess,
 } from './harness.js';
-import { scoreResult, rankResults } from '../../lib/ranking.js';
+import {
+  boostResultsByUsage, scoreResult, rankResults,
+} from '../../lib/ranking.js';
 import { UsageStore } from '../../lib/usage.js';
 
 test('exact equality beats a whole prefix', () => {
@@ -170,6 +172,69 @@ test('higher score always wins, even with less usage', () => {
   });
   assert(ranked[0] === prefix, 'prefix score should beat a fully used middle match');
   assertLess(scoreResult('spo', middle, { count: 50, lastUsed: 0 }), scoreResult('spo', prefix));
+});
+
+test('boostResultsByUsage promotes a frequently used app inside its block', () => {
+  const now = 1_000_000_000_000;
+  const results = [
+    { id: 'a', providerId: 'apps', title: 'Alfa', score: 100 },
+    { id: 'b', providerId: 'apps', title: 'Beta', score: 90 },
+    { id: 'c', providerId: 'apps', title: 'Gamma', score: 95 },
+  ];
+  const boosted = boostResultsByUsage(results, {
+    'apps:b': { count: 5, lastUsed: now - 1000 },
+  }, now);
+  assertEqual(boosted[0].id, 'b');
+});
+
+test('boostResultsByUsage keeps daemon provider sections in order', () => {
+  const now = 1_000_000_000_000;
+  const results = [
+    { id: 'a', providerId: 'apps', title: 'Alfa', score: 10 },
+    { id: 'b', providerId: 'apps', title: 'Beta', score: 9 },
+    { id: 's1', providerId: 'settings', title: 'Sieć', score: 5 },
+    { id: 's2', providerId: 'settings', title: 'System', score: 4 },
+  ];
+  const boosted = boostResultsByUsage(results, {
+    'settings:s2': { count: 7, lastUsed: now - 1000 },
+  }, now);
+  assertDeepEqual(
+    boosted.map(result => result.id),
+    ['a', 'b', 's2', 's1']
+  );
+});
+
+test('boostResultsByUsage leaves results untouched without usage', () => {
+  const results = [
+    { id: 'a', providerId: 'apps', title: 'Alfa', score: 10 },
+    { id: 'b', providerId: 'apps', title: 'Beta', score: 9 },
+  ];
+  assertEqual(boostResultsByUsage(results, {}), results);
+});
+
+test('boostResultsByUsage accepts a UsageStore instance', () => {
+  const now = 1_000_000_000_000;
+  const store = UsageStore.parse(JSON.stringify({
+    'apps:b': { count: 50, lastUsed: 0 },
+  }));
+  const results = [
+    { id: 'a', providerId: 'apps', title: 'Alfa', score: 100 },
+    { id: 'b', providerId: 'apps', title: 'Beta', score: 90 },
+  ];
+  assertEqual(boostResultsByUsage(results, store, now)[0].id, 'b');
+});
+
+test('boostResultsByUsage keeps original order when boosts tie', () => {
+  const now = 1_000_000_000_000;
+  const results = [
+    { id: 'a', providerId: 'apps', title: 'Alfa', score: 100 },
+    { id: 'b', providerId: 'apps', title: 'Beta', score: 90 },
+    { id: 'c', providerId: 'apps', title: 'Gamma', score: 80 },
+  ];
+  assertDeepEqual(
+    boostResultsByUsage(results, {}, now).map(result => result.id),
+    ['a', 'b', 'c']
+  );
 });
 
 run('ranking.test.js');
