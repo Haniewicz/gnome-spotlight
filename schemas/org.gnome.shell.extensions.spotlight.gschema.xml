@@ -48,6 +48,13 @@
       <range min="0" max="48"/>
     </key>
 
+    <key name="blur-dim" type="d">
+      <default>0.0</default>
+      <summary>Blur backdrop dimming</summary>
+      <description>Extra darkening of the blurred backdrop, from 0.0 (historical look) to 1.0 (maximum, veil alpha capped at 0.95). Only used while blur-enabled is true.</description>
+      <range min="0.0" max="1.0"/>
+    </key>
+
     <key name="clipboard-enabled" type="b">
       <default>true</default>
       <summary>Remember clipboard history</summary>

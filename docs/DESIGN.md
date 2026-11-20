@@ -188,7 +188,9 @@ Reguły wykonania:
   bufora rozmycia, więc w rogach nie ma skrawków. Welur czytelności jest osobnym,
   półprzezroczystym aktorem z `border-radius` i delikatną 1 px obwódką
   `rgba(255,255,255,0.16)` ustawianymi inline (ta sama obwódka co w trybie bez
-  blurra). Gdy Blur my Shell nie
+  blurra). Bazowe krycie weluru to `1 - panel-opacity + 0.15`; suwak
+  `blur-dim` (0–1) dodaje własne przyciemnienie, niezależnie od krycia panelu
+  (wynik jest ograniczony do 0.95, żeby nie zniknął cały blur). Gdy Blur my Shell nie
   jest zainstalowany lub włączony, blur jest wyłączany i zostaje półprzezroczysty panel
   (żadnej drugiej, niedopasowanej maski).
 - Skrót: `Main.wm.addKeybinding('toggle-keybinding', settings, Meta.KeyBindingFlags.NONE,
@@ -208,6 +210,10 @@ Reguły wykonania:
 | `usage-history` | `s` | `'{}'` | JSON `{ "<providerId>:<id>": {"count": n, "lastUsed": ms} }` |
 | `currency-rates` | `s` | `'{}'` | cache kursów `{base, rates, asOf}` |
 | `open-on-monitor` | `s` | `'pointer'` | `pointer` \| `focused` \| `primary` |
+| `panel-opacity` | `d` | `0.93` | krycie panelu (0.5–1.0) |
+| `blur-enabled` | `b` | `false` | opcjonalny blur tła (Blur my Shell) |
+| `blur-radius` | `i` | `24` | promień blurra 0–48 px |
+| `blur-dim` | `d` | `0.0` | dodatkowe przyciemnienie weluru 0–1 |
 
 ## 9. Bramka (tests)
 

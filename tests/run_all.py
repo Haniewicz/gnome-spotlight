@@ -49,6 +49,7 @@ EXPECTED_KEYS = {
     "panel-opacity": "d",
     "blur-enabled": "b",
     "blur-radius": "i",
+    "blur-dim": "d",
 }
 
 EXPECTED_DEFAULTS = {
@@ -67,6 +68,7 @@ EXPECTED_DEFAULTS = {
     "panel-opacity": "0.93",
     "blur-enabled": "false",
     "blur-radius": "24",
+    "blur-dim": "0.0",
 }
 
 # These modules are PURE by DESIGN §3: they must never import the shell or GI.

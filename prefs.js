@@ -103,6 +103,13 @@ function clampBlurRadius(value) {
   return Math.max(0, Math.min(48, Math.round(number)));
 }
 
+function clampBlurDimPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number))
+    return 0;
+  return Math.max(0, Math.min(100, Math.round(number * 100)));
+}
+
 function extraIndexRoots(settings) {
   const raw = safeGet(
     () => settings.get_strv('extra-index-roots'),
@@ -239,6 +246,43 @@ export default class SpotlightPreferences extends ExtensionPreferences {
     blurRadiusRow.set_activatable_widget(blurRadiusScale);
     appearanceGroup.add(blurRadiusRow);
 
+    const dimRow = new Adw.ActionRow({
+      title: 'Przyciemnienie tła (blur)',
+      subtitle: 'Dodatkowe przyciemnienie rozmytego tła; 0% bez zmian, działa przy włączonym blurze',
+    });
+    const dimAdjustment = new Gtk.Adjustment({
+      lower: 0,
+      upper: 100,
+      step_increment: 1,
+      page_increment: 10,
+      value: clampBlurDimPercent(
+        safeGet(() => settings.get_double('blur-dim'), 0)
+      ),
+    });
+    const dimScale = new Gtk.Scale({
+      orientation: Gtk.Orientation.HORIZONTAL,
+      adjustment: dimAdjustment,
+      digits: 0,
+      draw_value: true,
+      value_pos: Gtk.PositionType.RIGHT,
+      hexpand: true,
+      width_request: 200,
+      valign: Gtk.Align.CENTER,
+    });
+    dimScale.set_sensitive(blurRow.get_active());
+    dimScale.connect('value-changed', () => {
+      if (state.busy)
+        return;
+      const percent = Math.max(
+        0,
+        Math.min(100, Math.round(dimScale.get_value()))
+      );
+      safeSet(() => settings.set_double('blur-dim', percent / 100));
+    });
+    dimRow.add_suffix(dimScale);
+    dimRow.set_activatable_widget(dimScale);
+    appearanceGroup.add(dimRow);
+
     const opacityRow = new Adw.ActionRow({
       title: 'Krycie panelu',
       subtitle: 'Zakres 50–100%; 100% to panel nieprzezroczysty',
@@ -278,6 +322,7 @@ export default class SpotlightPreferences extends ExtensionPreferences {
     blurRow.connect('notify::active', () => {
       const active = blurRow.get_active();
       blurRadiusScale.set_sensitive(active);
+      dimScale.set_sensitive(active);
       if (state.busy)
         return;
       safeSet(() => settings.set_boolean('blur-enabled', active));

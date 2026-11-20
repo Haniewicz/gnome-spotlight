@@ -7,6 +7,7 @@ import {
   resolveBlurVeilAlpha,
   clampPanelOpacity,
   clampBlurRadius,
+  clampBlurDim,
   BLUR_SURFACE_STYLE,
   PANEL_BORDER_WIDTH,
   PANEL_BORDER_RGBA,
@@ -109,6 +110,23 @@ test('blur veil paints a delicate 1 px border inside the rounded surface', () =>
   assertTrue(alpha > 0 && alpha <= 0.2);
   // Bez box-shadow: cień to kolejny łuk rysowany przez St.
   assertFalse(style.includes('box-shadow'));
+});
+
+test('blur dim adds to the veil alpha independently of panel opacity', () => {
+  assertTrue(Math.abs(resolveBlurVeilAlpha(0.93, 0) - 0.22) <= 0.001);
+  assertTrue(Math.abs(resolveBlurVeilAlpha(0.93, 0.5) - 0.72) <= 0.001);
+  assertTrue(Math.abs(resolveBlurVeilAlpha(0.5, 0.1) - 0.75) <= 0.001);
+});
+
+test('blur dim is clamped to 0..1 and caps the veil at 0.95', () => {
+  assertEqual(resolveBlurVeilAlpha(0.93, 1), 0.95);
+  assertEqual(resolveBlurVeilAlpha(0.93, 2), 0.95);
+  assertEqual(resolveBlurVeilAlpha(0.93, -1), 0.22);
+  assertEqual(clampBlurDim(undefined), 0);
+  assertEqual(clampBlurDim(Number.NaN), 0);
+  assertEqual(clampBlurDim(-2), 0);
+  assertEqual(clampBlurDim(2), 1);
+  assertEqual(clampBlurDim(0.4), 0.4);
 });
 
 test('blur veil style clamps alpha and rounds the radius', () => {

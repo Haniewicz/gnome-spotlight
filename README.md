@@ -258,7 +258,10 @@ Na początku okna preferencji znajduje się grupa **„Wygląd”**:
 - **Rozmycie tła (blur)** — opcjonalny przełącznik (`blur-enabled`, domyślnie
   wyłączony),
 - **Promień rozmycia** — suwak 0–48 px (`blur-radius`, domyślnie 24), aktywny
-  tylko przy włączonym blurze.
+  tylko przy włączonym blurze,
+- **Przyciemnienie tła (blur)** — suwak 0–100% (`blur-dim`, domyślnie 0%)
+  dodatkowo przyciemnia rozmyte tło (welur), niezależnie od krycia panelu;
+  poprawia czytelność tekstu i jest aktywny tylko przy włączonym blurze.
 
 Blur rozmywa to, co jest pod panelem: klonuje dwie warstwy — tapetę
 (`Main.layoutManager._backgroundGroup`) i okna (`global.window_group`) — do
