@@ -141,6 +141,8 @@ Reguły wykonania:
 - Sort: `score` malejąco, remis → `usage` malejąco, remis → `title` rosnąco (localeCompare `pl`).
 - Funkcje: `scoreResult(query, result, usageEntry)`, `rankResults(query, results, usageMap)`.
   `rankResults` nie mutuje wejścia (test na to).
+- Tryb daemon: `boostResultsByUsage(results, usageMap)` dodaje boost frecency w obrębie
+  bloków `providerId` (kolejność sekcji zostaje), bo daemon nie widzi historii użycia Shella.
 
 ## 6. Kalkulator (bez `eval`)
 
@@ -162,7 +164,8 @@ Reguły wykonania:
 - Modal: `St.Widget` w `Main.uiGroup`, `style_class = 'spotlight-modal'`, szerokość 860 px,
   wyśrodkowany poziomo, górna krawędź na 14% wysokości monitora, `Shell.ModalDialog`-owy grab
   (`Main.pushModal(actor)`) i `Main.popModal()` w `close()`; brak wycieków grabów (podwójne `close()`
-  jest bezpieczne).
+  jest bezpieczne). Kliknięcie myszą poza panelem — także w zwiniętym widoku — zamyka modal;
+  kliknięcia w panelu zachowują normalną obsługę.
 - Pole: `St.Entry` z `can_focus = true`, karetką i ikoną lupy; wpisywanie nie może gubić znaków
   (test headless: wpisz „spo”, odczytaj 3 znaki).
 - Lista: sekcje `style_class = 'spotlight-section'`, wiersze `'spotlight-row'`,

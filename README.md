@@ -180,6 +180,11 @@ listę, nie błąd launchera.
 | `Print` | otwiera systemowy interfejs zrzutu ekranu także przy otwartym launcherze |
 | `Ctrl+Print` | zapisuje pełny zrzut do `~/Pictures/Spotlight-RRRRMMDD-GGMMSS.png` (fallback: katalog domowy) |
 | `Esc` | w podglądzie zwija sidebar, poza nim zamyka modal |
+| kliknięcie poza panelem | zamyka launcher — także gdy panel jest zwinięty |
+
+Kliknięcie gdziekolwiek poza panelem (pulpit, inne okno, górny panel) zamyka
+launcher. Kliknięcia wewnątrz panelu zachowują się normalnie (wpis, wiersze,
+podgląd, menu akcji).
 
 Menu akcji zawiera tylko akcje możliwe do wykonania; np. „Uruchom w terminalu”
 jest wyszarzone, gdy nie ma zainstalowanego terminala. Zamknięcie menu nie
@@ -475,6 +480,12 @@ równolegle odpytuje tylko lokalny provider `windows`; nie robi
 `get_installed()`, `Gio.AppInfo.get_all()` ani `locate` w ścieżce wpisywania.
 Brak daemona, timeout 150 ms lub błąd D-Bus przełącza na dotychczasową ścieżkę
 in-process.
+
+W trybie `daemon` ranking bazowy liczy daemon, który nie ma dostępu do
+historii użycia Shella. Rozszerzenie dokłada więc lokalne frecency
+(`boostResultsByUsage()`): często i świeżo wybierane wyniki pną się w górę
+**w obrębie swojej sekcji**, a kolejność sekcji (aplikacje, ustawienia, pliki,
+…) pozostaje bez zmian. W trybie `offline` robi to `ProviderRegistry`.
 
 Źródło widać w stopce modala:
 
