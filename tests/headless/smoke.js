@@ -640,7 +640,10 @@ export async function run() {
     assert(modal._body.visible === true, step, 'result body did not expand after typing');
     assert(modal._compact === false, step, 'modal stayed compact after typing');
     modal._entry.set_text('');
-    assert(modal._body.visible === false, step, 'result body did not collapse after clearing');
+    await waitFor(
+      () => modal._body.visible === false,
+      'result body did not collapse after clearing'
+    );
     assert(modal._rows.length === 0, step, 'rows survived clearing the query');
     modal._entry.set_text('s');
     modal._cancelSearch();

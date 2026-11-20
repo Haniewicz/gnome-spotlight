@@ -246,6 +246,11 @@ Panel startuje jako wąska lista wyników — sidebar podglądu jest domyślnie
 ukryty i nie rezerwuje miejsca (lista ma pełną szerokość modala). Rozwija go
 dopiero `Ctrl+Space`; to samo skrócenie albo `Esc` zwija panel z powrotem.
 
+Panel **rozwija się animacją** (~160 ms) przy pierwszym znaku i **zwija**
+(~150 ms) po wyczyszczeniu pola; wysokość łagodnie dogania też wyniki, które
+dochodzą już po rozpoczęciu rozwinięcia. Przy wyłączonych animacjach GNOME
+(`enable_animations`) przejście jest natychmiastowe.
+
 Na początku okna preferencji znajduje się grupa **„Wygląd”**:
 
 - **Krycie panelu** — suwak 50–100% (`panel-opacity`, domyślnie 93%);

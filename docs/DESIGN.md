@@ -165,7 +165,10 @@ Reguły wykonania:
   wyśrodkowany poziomo, górna krawędź na 14% wysokości monitora, `Shell.ModalDialog`-owy grab
   (`Main.pushModal(actor)`) i `Main.popModal()` w `close()`; brak wycieków grabów (podwójne `close()`
   jest bezpieczne). Kliknięcie myszą poza panelem — także w zwiniętym widoku — zamyka modal;
-  kliknięcia w panelu zachowują normalną obsługę.
+  kliknięcia w panelu zachowują normalną obsługę. Rozwijanie/zwijanie panelu jest animowane
+  (wysokość + opacity, ~160/150 ms), a zmiany wysokości wyników dochodzących w trakcie
+  rozwinięcia są dogrywane tweenem; przy `St.Settings.enable_animations = false` przejście
+  jest natychmiastowe.
 - Pole: `St.Entry` z `can_focus = true`, karetką i ikoną lupy; wpisywanie nie może gubić znaków
   (test headless: wpisz „spo”, odczytaj 3 znaki).
 - Lista: sekcje `style_class = 'spotlight-section'`, wiersze `'spotlight-row'`,
